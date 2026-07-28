@@ -16,7 +16,7 @@
 
 <header class="app-header">
     <div class="title-row">
-        <h1>📷 ScanLog <span class="version-badge">v1.0</span></h1>
+        <h1>📷 ScanLog <span class="version-badge">v1.1</span></h1>
         <div class="theme-switch" id="theme-switch" role="group" aria-label="Color theme">
             <button class="theme-opt" data-theme-opt="light"  title="Light theme"  aria-label="Light theme">☀️</button>
             <button class="theme-opt" data-theme-opt="dark"   title="Dark theme"   aria-label="Dark theme">🌙</button>
@@ -71,6 +71,13 @@
             <option value="line">關鍵字後整行</option>
         </select>
     </div>
+    <div class="field-row inline">
+        <label>擷取模式</label>
+        <select id="ocr-mode">
+            <option value="manual" selected>手動（按「擷取辨識」）</option>
+            <option value="auto">自動（連續辨識，命中即記錄）</option>
+        </select>
+    </div>
     <div class="camera-box">
         <video id="ocr-video" playsinline muted hidden></video>
         <div id="ocr-placeholder" class="camera-placeholder">
@@ -86,9 +93,9 @@
     </div>
     <div id="ocr-status" class="status-line" hidden></div>
     <div id="ocr-result" class="result-card" hidden>
-        <div class="result-label">擷取結果</div>
+        <div class="result-label" id="ocr-result-label">擷取結果</div>
         <div class="result-value" id="ocr-result-text"></div>
-        <div class="controls-row">
+        <div class="controls-row" id="ocr-result-actions">
             <button id="btn-ocr-save" class="btn primary">✔ 加入記錄</button>
             <button id="btn-ocr-discard" class="btn">✘ 捨棄</button>
         </div>

@@ -160,15 +160,43 @@ let ocrStream = null;
 let tesseractWorker = null;
 let tesseractLoading = null;
 let pendingOcrValue = null;
+let autoRunning = false;
+let lastAuto = { value: null, at: 0 };
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Grab the current video frame onto a canvas.
+// crop=true → only the centre band (around the dashed guide box):
+// smaller image = noticeably faster OCR per frame in auto mode.
+function grabFrame(v, crop) {
+    const canvas = document.createElement('canvas');
+    if (crop) {
+        const sx = Math.floor(v.videoWidth  * 0.04);
+        const sy = Math.floor(v.videoHeight * 0.30);
+        const sw = Math.floor(v.videoWidth  * 0.92);
+        const sh = Math.floor(v.videoHeight * 0.40);
+        canvas.width = sw; canvas.height = sh;
+        canvas.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, sw, sh);
+    } else {
+        canvas.width = v.videoWidth; canvas.height = v.videoHeight;
+        canvas.getContext('2d').drawImage(v, 0, 0);
+    }
+    return canvas;
+}
 
 // restore prefs
 if (prefs.ocrLabel) $('#ocr-label').value = prefs.ocrLabel;
 if (prefs.ocrScope) $('#ocr-scope').value = prefs.ocrScope;
+if (prefs.ocrMode)  $('#ocr-mode').value  = prefs.ocrMode;
 $('#ocr-label').addEventListener('change', () => {
     prefs.ocrLabel = $('#ocr-label').value; savePrefs(prefs);
 });
 $('#ocr-scope').addEventListener('change', () => {
     prefs.ocrScope = $('#ocr-scope').value; savePrefs(prefs);
+});
+$('#ocr-mode').addEventListener('change', () => {
+    prefs.ocrMode = $('#ocr-mode').value; savePrefs(prefs);
+    applyOcrMode();
 });
 
 async function startOcrCamera() {
@@ -193,12 +221,14 @@ async function startOcrCamera() {
     $('#ocr-placeholder').hidden = true;
     $('#ocr-guide').hidden = false;
     $('#btn-ocr-start').hidden = true;
-    $('#btn-ocr-capture').hidden = false;
     $('#btn-ocr-stop').hidden = false;
-    // Pre-warm the OCR engine in the background
+    applyOcrMode();
+    // Pre-warm the OCR engine in the background (auto mode's loop
+    // awaits ensureTesseract itself)
     ensureTesseract().catch(() => {});
 }
 function stopOcrCamera() {
+    autoRunning = false;
     if (ocrStream) {
         ocrStream.getTracks().forEach(t => t.stop());
         ocrStream = null;
@@ -211,6 +241,21 @@ function stopOcrCamera() {
     $('#btn-ocr-capture').hidden = true;
     $('#btn-ocr-stop').hidden = true;
     $('#ocr-status').hidden = true;
+}
+
+// Switch between manual (button) and auto (continuous) capture.
+// Safe to call anytime; only acts on the UI/loop when the camera runs.
+function applyOcrMode() {
+    const auto = $('#ocr-mode').value === 'auto';
+    const running = !!ocrStream;
+    $('#btn-ocr-capture').hidden = !running || auto;
+    if (!auto) {
+        autoRunning = false;          // loop exits after current frame
+        if (running) setOcrStatus('');
+    } else if (running) {
+        $('#ocr-result-actions').hidden = true;
+        autoLoop();
+    }
 }
 
 // Lazy-load tesseract.js from CDN only when OCR is used (≈3 MB + language data)
@@ -250,12 +295,7 @@ async function captureAndRecognize() {
 
     $('#btn-ocr-capture').disabled = true;
     try {
-        // Grab current frame at full camera resolution
-        const canvas = document.createElement('canvas');
-        canvas.width = v.videoWidth;
-        canvas.height = v.videoHeight;
-        canvas.getContext('2d').drawImage(v, 0, 0);
-
+        const canvas = grabFrame(v, false);   // full frame in manual mode
         const worker = await ensureTesseract();
         setOcrStatus('⏳ 辨識中…');
         const { data } = await worker.recognize(canvas);
@@ -269,8 +309,10 @@ async function captureAndRecognize() {
         if (value) {
             beep();
             pendingOcrValue = value;
-            $('#ocr-result').hidden = false;
+            $('#ocr-result-label').textContent = '擷取結果';
             $('#ocr-result-text').textContent = value;
+            $('#ocr-result-actions').hidden = false;
+            $('#ocr-result').hidden = false;
         } else {
             toast(`未找到「${label}」，請對準後再試`, 3000);
         }
@@ -279,6 +321,59 @@ async function captureAndRecognize() {
         toast('⚠ ' + (err?.message || err), 4000);
     } finally {
         $('#btn-ocr-capture').disabled = false;
+    }
+}
+
+// ── Auto mode: keep recognizing frames; when the keyword is found,
+//    record immediately (beep confirms) — no button press needed.
+async function autoLoop() {
+    if (autoRunning) return;                  // already looping
+    autoRunning = true;
+    try {
+        const worker = await ensureTesseract();
+        const v = $('#ocr-video');
+        while (autoRunning && ocrStream && $('#ocr-mode').value === 'auto') {
+            if (!v.videoWidth) { await sleep(300); continue; }
+            const label = $('#ocr-label').value.trim();
+            if (!label) { setOcrStatus('請先輸入目標關鍵字'); await sleep(800); continue; }
+
+            setOcrStatus('🔍 自動辨識中… 將關鍵字對準虛線框');
+            let raw = '';
+            try {
+                const { data } = await worker.recognize(grabFrame(v, true));
+                raw = data.text || '';
+            } catch { /* skip bad frame */ }
+            if (!autoRunning) break;
+
+            $('#ocr-raw').textContent = raw.trim() || '(無辨識結果)';
+            $('#ocr-raw-wrap').hidden = false;
+
+            const value = extractAfterLabel(raw, label, $('#ocr-scope').value);
+            if (value) {
+                const now = Date.now();
+                // Debounce: same value within 6 s = the same document
+                if (!(value === lastAuto.value && now - lastAuto.at < 6000)) {
+                    lastAuto = { value, at: now };
+                    const added = addRecord('ocr', label, value);
+                    beep();
+                    $('#ocr-result-label').textContent =
+                        added ? '自動擷取 · ✔ 已記錄' : '自動擷取 · 重複未記錄';
+                    $('#ocr-result-text').textContent = value;
+                    $('#ocr-result-actions').hidden = true;
+                    $('#ocr-result').hidden = false;
+                    await sleep(800);         // brief pause after a hit
+                }
+            }
+            await sleep(250);                 // yield between frames
+        }
+    } catch (err) {
+        toast('⚠ ' + (err?.message || err), 4000);
+    } finally {
+        autoRunning = false;
+        if (ocrStream && $('#ocr-mode').value === 'auto') {
+            // loop ended unexpectedly (e.g. engine error) — leave status off
+            setOcrStatus('');
+        }
     }
 }
 
