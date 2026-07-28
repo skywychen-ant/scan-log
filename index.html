@@ -16,7 +16,7 @@
 
 <header class="app-header">
     <div class="title-row">
-        <h1>📷 ScanLog <span class="version-badge">v1.2</span></h1>
+        <h1>📷 ScanLog <span class="version-badge">v1.3</span></h1>
         <div class="theme-switch" id="theme-switch" role="group" aria-label="Color theme">
             <button class="theme-opt" data-theme-opt="light"  title="Light theme"  aria-label="Light theme">☀️</button>
             <button class="theme-opt" data-theme-opt="dark"   title="Dark theme"   aria-label="Dark theme">🌙</button>
@@ -60,6 +60,16 @@
 
 <!-- ═══════════ Tab 2: OCR text capture ═══════════ -->
 <section id="tab-ocr" class="tab-panel" role="tabpanel">
+    <!-- Result shown at the TOP so it's visible without scrolling -->
+    <div id="ocr-result" class="result-card" hidden>
+        <div class="result-label" id="ocr-result-label">擷取結果</div>
+        <div class="result-value" id="ocr-result-text"></div>
+        <div class="controls-row" id="ocr-result-actions">
+            <button id="btn-ocr-save" class="btn primary">✔ 加入記錄</button>
+            <button id="btn-ocr-discard" class="btn">✘ 捨棄</button>
+        </div>
+    </div>
+    <div id="ocr-status" class="status-line" hidden></div>
     <div class="field-row">
         <label for="ocr-label">目標關鍵字（擷取其後的字串）</label>
         <input type="text" id="ocr-label" value="Report ID:" placeholder="例如 Report ID:">
@@ -94,15 +104,6 @@
         <button id="btn-ocr-start"   class="btn primary big">▶ 啟動相機</button>
         <button id="btn-ocr-capture" class="btn accent big" hidden>📸 擷取辨識</button>
         <button id="btn-ocr-stop"    class="btn danger big" hidden>■ 停止</button>
-    </div>
-    <div id="ocr-status" class="status-line" hidden></div>
-    <div id="ocr-result" class="result-card" hidden>
-        <div class="result-label" id="ocr-result-label">擷取結果</div>
-        <div class="result-value" id="ocr-result-text"></div>
-        <div class="controls-row" id="ocr-result-actions">
-            <button id="btn-ocr-save" class="btn primary">✔ 加入記錄</button>
-            <button id="btn-ocr-discard" class="btn">✘ 捨棄</button>
-        </div>
     </div>
     <details class="raw-ocr" id="ocr-raw-wrap" hidden>
         <summary>OCR 原始辨識文字</summary>

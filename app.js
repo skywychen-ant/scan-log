@@ -340,6 +340,7 @@ async function captureAndRecognize() {
             $('#ocr-result-text').textContent = value;
             $('#ocr-result-actions').hidden = false;
             $('#ocr-result').hidden = false;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         } else {
             toast(`未找到「${label}」，請對準後再試`, 3000);
         }
@@ -399,6 +400,7 @@ async function autoLoop() {
                     $('#ocr-result-text').textContent = value;
                     $('#ocr-result-actions').hidden = true;
                     $('#ocr-result').hidden = false;
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
                     await sleep(800);         // brief pause after a hit
                 }
             } else if (candidate.value) {
