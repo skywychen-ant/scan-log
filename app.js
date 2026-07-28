@@ -60,16 +60,21 @@ function toast(msg, ms = 2200) {
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { t.hidden = true; }, ms);
 }
+let audioCtx = null;
 function beep() {
     try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator(), g = ctx.createGain();
-        osc.connect(g); g.connect(ctx.destination);
-        osc.frequency.value = 1200; g.gain.value = 0.12;
-        osc.start(); osc.stop(ctx.currentTime + 0.12);
-        osc.onended = () => ctx.close();
+        // Shared AudioContext: created on first (user-initiated) beep and
+        // reused — required for reliable sound in the auto-OCR loop, where
+        // later beeps happen outside a direct user gesture.
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+        osc.connect(g); g.connect(audioCtx.destination);
+        osc.frequency.value = 1200; g.gain.value = 0.15;
+        osc.start(); osc.stop(audioCtx.currentTime + 0.15);
     } catch { /* audio unavailable */ }
-    if (navigator.vibrate) navigator.vibrate(80);
+    // Note: iOS Safari has no web vibration API — Android only.
+    if (navigator.vibrate) navigator.vibrate(200);
 }
 
 function updateTodayBadge() {
@@ -198,6 +203,10 @@ $('#ocr-mode').addEventListener('change', () => {
     prefs.ocrMode = $('#ocr-mode').value; savePrefs(prefs);
     applyOcrMode();
 });
+if (prefs.ocrStable === false) $('#chk-ocr-stable').checked = false;
+$('#chk-ocr-stable').addEventListener('change', () => {
+    prefs.ocrStable = $('#chk-ocr-stable').checked; savePrefs(prefs);
+});
 
 async function startOcrCamera() {
     if (ocrStream) return;
@@ -275,11 +284,28 @@ function ensureTesseract() {
         }
         setOcrStatus('⏳ 初始化 OCR 引擎…');
         tesseractWorker = await Tesseract.createWorker('eng');
+        // Restrict to characters that appear in labels + ID values —
+        // greatly reduces noise misreads (e.g. gap texture → "|"/"~").
+        await tesseractWorker.setParameters({
+            tessedit_char_whitelist:
+                'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' +
+                '0123456789:;.,#()/_- ',
+            preserve_interword_spaces: '1'
+        });
         setOcrStatus('');
         return tesseractWorker;
     })();
     tesseractLoading.catch(() => { tesseractLoading = null; });
     return tesseractLoading;
+}
+
+// Page-segmentation mode: '6' (single uniform block) suits the narrow
+// cropped guide band in auto mode; '3' (full auto) suits manual full-frame.
+let currentPsm = null;
+async function setPsm(worker, psm) {
+    if (currentPsm === psm) return;
+    await worker.setParameters({ tessedit_pageseg_mode: psm });
+    currentPsm = psm;
 }
 function setOcrStatus(msg) {
     const el = $('#ocr-status');
@@ -297,6 +323,7 @@ async function captureAndRecognize() {
     try {
         const canvas = grabFrame(v, false);   // full frame in manual mode
         const worker = await ensureTesseract();
+        await setPsm(worker, '3');
         setOcrStatus('⏳ 辨識中…');
         const { data } = await worker.recognize(canvas);
         setOcrStatus('');
@@ -329,15 +356,17 @@ async function captureAndRecognize() {
 async function autoLoop() {
     if (autoRunning) return;                  // already looping
     autoRunning = true;
+    let candidate = { value: null, hits: 0 }; // consecutive-frame confirmation
     try {
         const worker = await ensureTesseract();
+        await setPsm(worker, '6');
         const v = $('#ocr-video');
         while (autoRunning && ocrStream && $('#ocr-mode').value === 'auto') {
             if (!v.videoWidth) { await sleep(300); continue; }
             const label = $('#ocr-label').value.trim();
             if (!label) { setOcrStatus('請先輸入目標關鍵字'); await sleep(800); continue; }
 
-            setOcrStatus('🔍 自動辨識中… 將關鍵字對準虛線框');
+            if (!candidate.value) setOcrStatus('🔍 自動辨識中… 將關鍵字對準虛線框');
             let raw = '';
             try {
                 const { data } = await worker.recognize(grabFrame(v, true));
@@ -350,6 +379,15 @@ async function autoLoop() {
 
             const value = extractAfterLabel(raw, label, $('#ocr-scope').value);
             if (value) {
+                // Stability gate: require the SAME value on 2 consecutive
+                // frames (when enabled) — filters one-off OCR misreads.
+                if ($('#chk-ocr-stable').checked && !(candidate.value === value && candidate.hits >= 1)) {
+                    candidate = { value, hits: 1 };
+                    setOcrStatus(`👀 偵測到 ${value} — 確認中…`);
+                    await sleep(150);
+                    continue;
+                }
+                candidate = { value: null, hits: 0 };
                 const now = Date.now();
                 // Debounce: same value within 6 s = the same document
                 if (!(value === lastAuto.value && now - lastAuto.at < 6000)) {
@@ -363,6 +401,8 @@ async function autoLoop() {
                     $('#ocr-result').hidden = false;
                     await sleep(800);         // brief pause after a hit
                 }
+            } else if (candidate.value) {
+                candidate = { value: null, hits: 0 };   // lost it — reset
             }
             await sleep(250);                 // yield between frames
         }
@@ -392,9 +432,16 @@ function extractAfterLabel(text, label, scope) {
     for (const line of text.split(/\r?\n/)) {
         const m = line.match(re);
         if (m && m[1]) {
-            let rest = m[1].trim();
-            if (scope === 'token') rest = rest.split(/\s+/)[0];
-            if (rest) return rest;
+            // Clean up: OCR often re-reads the colon or picks up stray
+            // punctuation in the wide gap between label and value
+            // (e.g. "Report ID :   : C6BD…" → captured ":").
+            let rest = m[1].replace(/^[\s:;：=.\-–—_|]+/, '').trim();
+            if (scope === 'token') rest = rest.split(/\s+/)[0] || '';
+            rest = rest.replace(/[.,;:：|]+$/, '');
+            // Validity gate: a real value has at least 3 alphanumeric
+            // chars — rejects lone colons / dashes / noise fragments.
+            const alnum = (rest.match(/[A-Za-z0-9]/g) || []).length;
+            if (rest && alnum >= 3) return rest;
         }
     }
     return null;

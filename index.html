@@ -16,7 +16,7 @@
 
 <header class="app-header">
     <div class="title-row">
-        <h1>📷 ScanLog <span class="version-badge">v1.1</span></h1>
+        <h1>📷 ScanLog <span class="version-badge">v1.2</span></h1>
         <div class="theme-switch" id="theme-switch" role="group" aria-label="Color theme">
             <button class="theme-opt" data-theme-opt="light"  title="Light theme"  aria-label="Light theme">☀️</button>
             <button class="theme-opt" data-theme-opt="dark"   title="Dark theme"   aria-label="Dark theme">🌙</button>
@@ -78,6 +78,10 @@
             <option value="auto">自動（連續辨識，命中即記錄）</option>
         </select>
     </div>
+    <label class="opt-row">
+        <input type="checkbox" id="chk-ocr-stable" checked>
+        自動模式：連續兩次辨識相同才記錄（防誤判）
+    </label>
     <div class="camera-box">
         <video id="ocr-video" playsinline muted hidden></video>
         <div id="ocr-placeholder" class="camera-placeholder">
