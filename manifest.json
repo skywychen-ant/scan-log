@@ -1,0 +1,18 @@
+{
+    "name": "ScanLog 掃碼記錄",
+    "short_name": "ScanLog",
+    "description": "QR / Barcode 掃描與 OCR 關鍵字擷取工具，每日記錄清單",
+    "start_url": "./index.html",
+    "display": "standalone",
+    "background_color": "#0f1117",
+    "theme_color": "#0f1117",
+    "orientation": "portrait",
+    "icons": [
+        {
+            "src": "icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any"
+        }
+    ]
+}

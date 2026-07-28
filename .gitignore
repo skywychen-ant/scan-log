@@ -1,0 +1,9 @@
+build/
+dist/
+dist-win/
+dist-mac/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+venv/

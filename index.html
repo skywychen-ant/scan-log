@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>ScanLog 掃碼記錄</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<script src="lib/theme.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="app-header">
+    <div class="title-row">
+        <h1>📷 ScanLog <span class="version-badge">v1.0</span></h1>
+        <div class="theme-switch" id="theme-switch" role="group" aria-label="Color theme">
+            <button class="theme-opt" data-theme-opt="light"  title="Light theme"  aria-label="Light theme">☀️</button>
+            <button class="theme-opt" data-theme-opt="dark"   title="Dark theme"   aria-label="Dark theme">🌙</button>
+            <button class="theme-opt" data-theme-opt="auto"   title="Match system" aria-label="Match system">🖥️</button>
+        </div>
+    </div>
+</header>
+
+<!-- ═══════════ Tab bar ═══════════ -->
+<nav class="tab-bar" role="tablist">
+    <button class="tab-btn active" data-tab="scan"    role="tab">📷<span>掃碼</span></button>
+    <button class="tab-btn"        data-tab="ocr"     role="tab">🔤<span>文字擷取</span></button>
+    <button class="tab-btn"        data-tab="records" role="tab">📋<span>記錄<em id="today-count-badge" class="count-badge" hidden>0</em></span></button>
+</nav>
+
+<main>
+
+<!-- ═══════════ Tab 1: QR / Barcode scan ═══════════ -->
+<section id="tab-scan" class="tab-panel active" role="tabpanel">
+    <div class="camera-box">
+        <div id="qr-reader"></div>
+        <div id="scan-placeholder" class="camera-placeholder">
+            <p>📷</p>
+            <p>支援 QR Code、Code 128 / 39、EAN、UPC、<br>Data Matrix、PDF417 等格式</p>
+        </div>
+    </div>
+    <div class="controls-row">
+        <button id="btn-scan-start" class="btn primary big">▶ 開始掃描</button>
+        <button id="btn-scan-stop"  class="btn danger big" hidden>■ 停止</button>
+    </div>
+    <label class="opt-row">
+        <input type="checkbox" id="chk-dedupe" checked>
+        今日相同內容不重複記錄
+    </label>
+    <div id="scan-result" class="result-card" hidden>
+        <div class="result-label">最新掃描結果</div>
+        <div class="result-value" id="scan-result-text"></div>
+        <div class="result-meta" id="scan-result-meta"></div>
+    </div>
+</section>
+
+<!-- ═══════════ Tab 2: OCR text capture ═══════════ -->
+<section id="tab-ocr" class="tab-panel" role="tabpanel">
+    <div class="field-row">
+        <label for="ocr-label">目標關鍵字（擷取其後的字串）</label>
+        <input type="text" id="ocr-label" value="Report ID:" placeholder="例如 Report ID:">
+    </div>
+    <div class="field-row inline">
+        <label>擷取範圍</label>
+        <select id="ocr-scope">
+            <option value="token" selected>關鍵字後第一段（至空白為止）</option>
+            <option value="line">關鍵字後整行</option>
+        </select>
+    </div>
+    <div class="camera-box">
+        <video id="ocr-video" playsinline muted hidden></video>
+        <div id="ocr-placeholder" class="camera-placeholder">
+            <p>🔤</p>
+            <p>啟動相機後，將文件上的關鍵字對準畫面<br>按「擷取辨識」進行 OCR</p>
+        </div>
+        <div class="ocr-guide" id="ocr-guide" hidden></div>
+    </div>
+    <div class="controls-row">
+        <button id="btn-ocr-start"   class="btn primary big">▶ 啟動相機</button>
+        <button id="btn-ocr-capture" class="btn accent big" hidden>📸 擷取辨識</button>
+        <button id="btn-ocr-stop"    class="btn danger big" hidden>■ 停止</button>
+    </div>
+    <div id="ocr-status" class="status-line" hidden></div>
+    <div id="ocr-result" class="result-card" hidden>
+        <div class="result-label">擷取結果</div>
+        <div class="result-value" id="ocr-result-text"></div>
+        <div class="controls-row">
+            <button id="btn-ocr-save" class="btn primary">✔ 加入記錄</button>
+            <button id="btn-ocr-discard" class="btn">✘ 捨棄</button>
+        </div>
+    </div>
+    <details class="raw-ocr" id="ocr-raw-wrap" hidden>
+        <summary>OCR 原始辨識文字</summary>
+        <pre id="ocr-raw"></pre>
+    </details>
+</section>
+
+<!-- ═══════════ Tab 3: Records ═══════════ -->
+<section id="tab-records" class="tab-panel" role="tabpanel">
+    <div class="records-toolbar">
+        <select id="rec-date"></select>
+        <button id="btn-export-txt" class="btn">⬇ TXT</button>
+        <button id="btn-export-csv" class="btn">⬇ CSV</button>
+        <button id="btn-copy-list"  class="btn">📋 複製</button>
+    </div>
+    <ul id="rec-list" class="rec-list"></ul>
+    <p id="rec-empty" class="empty-hint">此日期尚無記錄</p>
+    <div class="controls-row">
+        <button id="btn-clear-day" class="btn danger small">🗑 清除此日期全部記錄</button>
+    </div>
+</section>
+
+</main>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="lib/html5-qrcode.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
