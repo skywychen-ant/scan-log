@@ -28,18 +28,14 @@
 localhost）** 使用。手機直接開 `file://` 或 `http://192.168.x.x`
 都拿不到相機。部署選項：
 
-### 選項 A：GitHub Pages（建議，最省事）
+### 選項 A：GitHub Pages（✅ 已部署，正式網址）
 
-```bash
-cd scan-log
-git init && git add . && git commit -m "feat: ScanLog v1.0"
-# 建立 GitHub repo 後：
-git remote add origin <repo-url>
-git push -u origin main
-# GitHub repo → Settings → Pages → Deploy from branch → main → / (root)
-```
+**https://skywychen-ant.github.io/scan-log/**
 
-手機開 `https://<user>.github.io/<repo>/`，即可使用。
+Repo: https://github.com/skywychen-ant/scan-log
+（main branch 根目錄直接發佈；改版後 `git push` 即自動更新，
+約 1 分鐘生效。）
+
 （注意：GitHub Pages 為公開網址，內容僅為靜態工具頁面、不含資料，
 掃描記錄只存在使用者手機本機。）
 
