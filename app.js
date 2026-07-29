@@ -347,6 +347,62 @@ function extractReportId(text) {
     return null;
 }
 
+// ── Two-stage refinement: locate the "Report ID" label via the word
+// bounding boxes from the first OCR pass, then re-OCR ONLY the value
+// zone (right of the label) magnified 2–4× in single-line mode.
+// This is what rescues far/whole-page scans: the label is bold enough
+// to read, the value is not — until it's blown up.
+function reportIdRoi(blocks, W, H) {
+    const lines = [];
+    for (const b of blocks || []) {
+        for (const p of b.paragraphs || []) {
+            for (const l of p.lines || []) lines.push(l);
+        }
+    }
+    const clean = w => ((w && w.text) || '').replace(/[^A-Za-z0-9]/g, '');
+    let bb = null;
+    for (const l of lines) {
+        const ws = l.words || [];
+        for (let i = 0; i < ws.length && !bb; i++) {
+            const t = clean(ws[i]);
+            // "Report" followed by "ID", or merged "ReportID"
+            if (/^Rep[o0]rt$/i.test(t) && /^[I1l|!][DO0]?$/i.test(clean(ws[i + 1]))) {
+                bb = (ws[i + 1].bbox) || ws[i].bbox;
+            } else if (/^Rep[o0]rt[I1l|!][DO0]$/i.test(t)) {
+                bb = ws[i].bbox;
+            }
+        }
+        if (bb) break;
+    }
+    if (!bb) return null;
+    const lineH = Math.max(8, bb.y1 - bb.y0);
+    const x = Math.min(bb.x1 + 2, W - 20);
+    const y = Math.max(0, bb.y0 - lineH * 0.7);
+    const h = Math.min(H, bb.y1 + lineH * 0.7) - y;
+    const w = W - x;
+    return (w < 40 || h < 8) ? null : { x, y, w, h };
+}
+
+async function refineReportId(worker, canvas, blocks) {
+    try {
+        const roi = reportIdRoi(blocks, canvas.width, canvas.height);
+        if (!roi) return null;
+        const scale = Math.min(4, Math.max(2, 1200 / roi.w));
+        const c2 = document.createElement('canvas');
+        c2.width = Math.round(roi.w * scale);
+        c2.height = Math.round(roi.h * scale);
+        const ctx = c2.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        try { ctx.filter = 'grayscale(1) contrast(1.4)'; } catch { /* optional */ }
+        ctx.drawImage(canvas, roi.x, roi.y, roi.w, roi.h, 0, 0, c2.width, c2.height);
+        await setPsm(worker, '7');            // single text line
+        const { data } = await worker.recognize(c2);
+        await setPsm(worker, '6');
+        return extractReportId(data.text || '');
+    } catch { return null; }
+}
+
 // Label-free FALLBACK: when a value format is set, a long
 // format-matching token in the band IS the value even if the label
 // itself was garbled by OCR ("Rcport I0 :" etc.). Requires ≥12 chars
@@ -545,14 +601,20 @@ async function captureAndRecognize() {
         const worker = await ensureTesseract();
         await setPsm(worker, '3');
         setOcrStatus('⏳ 辨識中…');
-        const { data } = await worker.recognize(canvas);
+        const { data } = await worker.recognize(canvas, {}, { blocks: true, text: true });
         setOcrStatus('');
 
         const raw = data.text || '';
         $('#ocr-raw').textContent = raw.trim() || '(無辨識結果)';
         $('#ocr-raw-wrap').hidden = false;
 
-        const { value, via, formatFail } = extractValue(raw);
+        let { value, via, formatFail } = extractValue(raw);
+        if (!value && $('#ocr-target').value === 'report-id') {
+            setOcrStatus('⏳ 放大值區域再辨識…');
+            const refined = await refineReportId(worker, canvas, data.blocks);
+            setOcrStatus('');
+            if (refined) value = refined;
+        }
         if (value) {
             beep();
             pendingOcrValue = value;
@@ -615,19 +677,27 @@ async function autoLoop() {
             if (!label) { setOcrStatus('請先輸入目標關鍵字'); await sleep(800); continue; }
 
             if (!votes.length) setOcrStatus('🔍 自動辨識中… 將關鍵字對準虛線框');
-            let raw = '';
+            let raw = '', blocks = null, frame = null;
             try {
-                const frame = grabFrame(v, true);
+                frame = grabFrame(v, true);
                 updateBandPreview(frame, false);
-                const { data } = await worker.recognize(frame);
-                raw = data.text || '';
+                const res = await worker.recognize(frame, {}, { blocks: true, text: true });
+                raw = res.data.text || '';
+                blocks = res.data.blocks;
             } catch { /* skip bad frame */ }
             if (!autoRunning) break;
 
             $('#ocr-raw').textContent = raw.trim() || '(無辨識結果)';
             $('#ocr-raw-wrap').hidden = false;
 
-            const { value, via, formatFail } = extractValue(raw);
+            let { value, via, formatFail } = extractValue(raw);
+            // Two-stage rescue: label located but value unreadable →
+            // re-OCR the magnified value zone
+            if (!value && frame && blocks && $('#ocr-target').value === 'report-id') {
+                const refined = await refineReportId(worker, frame, blocks);
+                if (refined) value = refined;
+                if (!autoRunning) break;
+            }
             if (!value && formatFail) {
                 setOcrStatus(`⚠ 找到關鍵字，值「${formatFail}」不符格式 — 繼續辨識…`);
             } else if (!value && $('#ocr-target').value === 'report-id' &&
