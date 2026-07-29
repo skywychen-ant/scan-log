@@ -148,22 +148,56 @@ async function startScanner() {
     if (!qrScanner) qrScanner = new Html5Qrcode('qr-reader');
     try {
         await qrScanner.start(
-            { facingMode: 'environment' },
-            { fps: 10, qrbox: (w, h) => {
-                const size = Math.floor(Math.min(w, h) * 0.75);
-                return { width: size, height: Math.floor(size * 0.7) };
-            } },
+            // High resolution is critical for print-quality 1D barcodes —
+            // the library's default (~VGA) blurs the thin bars together.
+            { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } },
+            {
+                fps: 15,
+                // Wide, short box suits 1D barcodes; QR still fits.
+                qrbox: (w, h) => ({
+                    width: Math.floor(w * 0.85),
+                    height: Math.floor(Math.min(h * 0.45, w * 0.6))
+                }),
+                // Native decoder (Android Chrome) beats the JS fallback
+                experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+            },
             onScanSuccess,
             () => {} // per-frame decode misses — ignore
         );
         scannerRunning = true;
         $('#btn-scan-start').hidden = true;
         $('#btn-scan-stop').hidden = false;
+        // Continuous autofocus helps close-up barcode work
+        try { await qrScanner.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch { /* optional */ }
+        setupScanZoom();
     } catch (err) {
         $('#scan-placeholder').hidden = false;
         toast('⚠ 無法啟動相機：' + (err?.message || err), 4000);
     }
 }
+
+// Hardware zoom for the barcode scanner (Android mostly; iOS: none)
+function setupScanZoom() {
+    const row = $('#scan-zoom-row');
+    row.hidden = true;
+    let caps = {};
+    try { caps = qrScanner.getRunningTrackCapabilities() || {}; } catch { return; }
+    if (!caps.zoom || !(caps.zoom.max > 1)) return;
+    row.hidden = false;
+    row.querySelectorAll('.scan-zoom-opt').forEach(b => {
+        const z = parseFloat(b.dataset.zoom);
+        b.hidden = z > caps.zoom.max;
+        b.classList.toggle('primary', z === 1);
+        b.onclick = async () => {
+            try {
+                await qrScanner.applyVideoConstraints({ advanced: [{ zoom: z }] });
+                row.querySelectorAll('.scan-zoom-opt').forEach(x =>
+                    x.classList.toggle('primary', x === b));
+            } catch { toast('此相機不支援此變焦倍率'); }
+        };
+    });
+}
+
 async function stopScanner() {
     if (!scannerRunning || !qrScanner) return;
     try { await qrScanner.stop(); qrScanner.clear(); } catch { /* already stopped */ }
@@ -171,6 +205,7 @@ async function stopScanner() {
     $('#btn-scan-start').hidden = false;
     $('#btn-scan-stop').hidden = true;
     $('#scan-placeholder').hidden = false;
+    $('#scan-zoom-row').hidden = true;
 }
 
 function onScanSuccess(text, result) {

@@ -16,7 +16,7 @@
 
 <header class="app-header">
     <div class="title-row">
-        <h1>📷 ScanLog <span class="version-badge">v2.4</span></h1>
+        <h1>📷 ScanLog <span class="version-badge">v2.5</span></h1>
         <div class="theme-switch" id="theme-switch" role="group" aria-label="Color theme">
             <button class="theme-opt" data-theme-opt="light"  title="Light theme"  aria-label="Light theme">☀️</button>
             <button class="theme-opt" data-theme-opt="dark"   title="Dark theme"   aria-label="Dark theme">🌙</button>
@@ -42,6 +42,12 @@
             <p>📷</p>
             <p>支援 QR Code、Code 128 / 39、EAN、UPC、<br>Data Matrix、PDF417 等格式</p>
         </div>
+    </div>
+    <div class="controls-row" id="scan-zoom-row" hidden>
+        <span class="zoom-label">🔍 變焦</span>
+        <button class="btn scan-zoom-opt" data-zoom="1">1×</button>
+        <button class="btn scan-zoom-opt" data-zoom="2">2×</button>
+        <button class="btn scan-zoom-opt" data-zoom="3">3×</button>
     </div>
     <div class="controls-row">
         <button id="btn-scan-start" class="btn primary big">▶ 開始掃描</button>
