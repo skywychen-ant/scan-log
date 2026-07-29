@@ -254,6 +254,26 @@ function valueFormatOk(v) {
         default:       return true;
     }
 }
+
+// Hex IDs are recorded uppercase for consistent dedupe/export.
+function normalizeValue(v) {
+    return $('#ocr-format').value === 'hex' ? v.toUpperCase() : v;
+}
+
+// Label-free FALLBACK: when a value format is set, a long
+// format-matching token in the band IS the value even if the label
+// itself was garbled by OCR ("Rcport I0 :" etc.). Requires ≥12 chars
+// including a digit, and must be unambiguous (single distinct match).
+function fallbackValue(text) {
+    if ($('#ocr-format').value === 'any') return null;
+    const cands = new Set();
+    for (const tok0 of text.split(/\s+/)) {
+        const tok = tok0.replace(/^[^0-9A-Za-z]+|[^0-9A-Za-z]+$/g, '');
+        if (tok.length < 12 || !/[0-9]/.test(tok)) continue;
+        if (valueFormatOk(tok)) cands.add(normalizeValue(tok));
+    }
+    return cands.size === 1 ? [...cands][0] : null;
+}
 $('#ocr-mode').addEventListener('change', () => {
     prefs.ocrMode = $('#ocr-mode').value; savePrefs(prefs);
     applyOcrMode();
@@ -390,17 +410,26 @@ async function captureAndRecognize() {
         $('#ocr-raw').textContent = raw.trim() || '(無辨識結果)';
         $('#ocr-raw-wrap').hidden = false;
 
-        const value = extractAfterLabel(raw, label, $('#ocr-scope').value);
-        if (value && !valueFormatOk(value)) {
-            toast(`「${value}」不符合值格式設定，已拒絕`, 3000);
-        } else if (value) {
+        let value = extractAfterLabel(raw, label, $('#ocr-scope').value);
+        let formatFail = null;
+        if (value && !valueFormatOk(value)) { formatFail = value; value = null; }
+        let via = 'label';
+        if (!value) {
+            const fb = fallbackValue(raw);
+            if (fb) { value = fb; via = 'format'; }
+        }
+        if (value) {
+            value = normalizeValue(value);
             beep();
             pendingOcrValue = value;
-            $('#ocr-result-label').textContent = '擷取結果';
+            $('#ocr-result-label').textContent =
+                via === 'label' ? '擷取結果' : '擷取結果（格式直抓，未讀到關鍵字）';
             $('#ocr-result-text').textContent = value;
             $('#ocr-result-actions').hidden = false;
             $('#ocr-result').hidden = false;
             window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else if (formatFail) {
+            toast(`找到關鍵字，但「${formatFail}」不符值格式，已拒絕`, 3500);
         } else {
             toast(`未找到「${label}」，請對準後再試`, 3000);
         }
@@ -439,7 +468,16 @@ async function autoLoop() {
             $('#ocr-raw-wrap').hidden = false;
 
             let value = extractAfterLabel(raw, label, $('#ocr-scope').value);
-            if (value && !valueFormatOk(value)) value = null;  // misread — keep trying
+            let via = 'label';
+            if (value && !valueFormatOk(value)) {
+                setOcrStatus(`⚠ 找到關鍵字，值「${value}」不符格式 — 繼續辨識…`);
+                value = null;                 // misread — keep trying
+            }
+            if (!value) {
+                const fb = fallbackValue(raw);
+                if (fb) { value = fb; via = 'format'; }
+            }
+            if (value) value = normalizeValue(value);
             if (value) {
                 // Stability gate: require the SAME value on 2 consecutive
                 // frames (when enabled) — filters one-off OCR misreads.
@@ -456,8 +494,9 @@ async function autoLoop() {
                     lastAuto = { value, at: now };
                     const added = addRecord('ocr', label, value);
                     beep();
+                    const viaTag = via === 'format' ? '（格式直抓）' : '';
                     $('#ocr-result-label').textContent =
-                        added ? '自動擷取 · ✔ 已記錄' : '自動擷取 · 重複未記錄';
+                        added ? `自動擷取${viaTag} · ✔ 已記錄` : `自動擷取${viaTag} · 重複未記錄`;
                     $('#ocr-result-text').textContent = value;
                     $('#ocr-result-actions').hidden = true;
                     $('#ocr-result').hidden = false;
@@ -480,15 +519,27 @@ async function autoLoop() {
     }
 }
 
+// Common OCR character confusions — each label letter also matches the
+// glyphs OCR typically mistakes it for (case handled by the 'i' flag).
+const OCR_CONFUSE = {
+    o: 'oO0Q', i: 'iIl1|!', l: 'lI1|!i', e: 'eE', s: 'sS5$',
+    b: 'bB8', g: 'gG9', z: 'zZ2', t: 'tT7', d: 'dDO0',
+    a: 'aA4', q: 'qQ9', u: 'uUvV', v: 'vVuU'
+};
+
 // Find `label` in OCR text (tolerating OCR noise) and return what follows.
 function extractAfterLabel(text, label, scope) {
     // Build a whitespace-tolerant, case-insensitive regex from the label:
-    // each char can be followed by optional spaces; ':' also matches ';' or '：'
+    // each char can be followed by optional spaces; letters expand to
+    // their OCR-confusable set; ':' matches ';./,' too and is OPTIONAL
+    // (OCR sometimes drops it entirely).
     const esc = c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const pattern = label.split('').map(ch => {
         if (/\s/.test(ch)) return '\\s*';
-        if (ch === ':' || ch === '：') return '[:;：]';
-        return esc(ch) + '\\s*';
+        if (ch === ':' || ch === '：') return '[:;：.,]?';
+        const conf = OCR_CONFUSE[ch.toLowerCase()];
+        const cls = conf ? '[' + conf.split('').map(esc).join('') + ']' : esc(ch);
+        return cls + '\\s*';
     }).join('');
     const re = new RegExp(pattern + '\\s*(.+)', 'i');
 
