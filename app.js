@@ -203,10 +203,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Grab the current video frame onto a canvas.
 // crop=true → only the centre band (around the dashed guide box).
-// The result is DOWNSCALED before OCR: recognition time scales with
-// pixel count, and Tesseract only needs ~20–30 px text height —
-// full camera resolution is wasted work.
-const OCR_MAX_W_CROP = 1000, OCR_MAX_W_FULL = 1400;
+// The frame is scaled TOWARDS a target width before OCR:
+// - big frames shrink (recognition time scales with pixel count)
+// - small frames from low-res cameras UPSCALE up to 2× — Tesseract
+//   needs ~20–30 px text height; too few pixels-on-text = misreads
+//   even when the on-screen preview looks perfectly sharp.
+const OCR_TARGET_W_CROP = 1000, OCR_TARGET_W_FULL = 1400;
 function grabFrame(v, crop) {
     let sx, sy, sw, sh;
     if (crop) {
@@ -217,11 +219,14 @@ function grabFrame(v, crop) {
     } else {
         sx = 0; sy = 0; sw = v.videoWidth; sh = v.videoHeight;
     }
-    const scale = Math.min(1, (crop ? OCR_MAX_W_CROP : OCR_MAX_W_FULL) / sw);
+    const target = crop ? OCR_TARGET_W_CROP : OCR_TARGET_W_FULL;
+    const scale = Math.min(crop ? 2 : 1.5, target / sw);
     const canvas = document.createElement('canvas');
     canvas.width  = Math.round(sw * scale);
     canvas.height = Math.round(sh * scale);
     const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     // Grayscale + contrast boost: faster AND more accurate on printed
     // documents (silently ignored where ctx.filter is unsupported).
     try { ctx.filter = 'grayscale(1) contrast(1.25)'; } catch { /* optional */ }
@@ -290,14 +295,23 @@ async function startOcrCamera() {
         return;
     }
     try {
+        // Ask for the camera's best resolution (weak cameras deliver
+        // their max; strong ones cap near 2560) — OCR quality depends
+        // on pixels-on-text, not on how sharp the preview looks.
         ocrStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+            video: { facingMode: 'environment', width: { ideal: 2560 }, height: { ideal: 1440 } },
             audio: false
         });
     } catch (err) {
         toast('⚠ 無法啟動相機：' + (err?.message || err), 4000);
         return;
     }
+    // Prefer continuous autofocus where the platform allows it
+    // (reduces focus hunting on document text)
+    try {
+        await ocrStream.getVideoTracks()[0]
+            .applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+    } catch { /* unsupported — camera default behaviour */ }
     const v = $('#ocr-video');
     v.srcObject = ocrStream;
     v.hidden = false;
@@ -387,8 +401,10 @@ async function setPsm(worker, psm) {
 }
 function setOcrStatus(msg) {
     const el = $('#ocr-status');
-    el.textContent = msg;
-    el.hidden = !msg;
+    // Keep the element in flow (nbsp) while the camera runs — toggling
+    // its height every frame made the whole camera view jitter.
+    el.textContent = msg || '\u00A0';
+    el.hidden = !msg && !ocrStream;
 }
 
 async function captureAndRecognize() {

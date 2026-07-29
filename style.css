@@ -161,7 +161,10 @@ h1 { font-size: 1.25rem; font-weight: 700; }
 #tab-ocr .result-card { margin: 0 0 10px; }
 #tab-ocr .status-line { margin: 0 2px 10px; }
 
-.status-line { font-size: 0.85rem; color: var(--accent); margin: 8px 2px; }
+/* Fixed height — status text changes every frame during auto-OCR and
+   MUST NOT reflow the layout below it (caused visible camera jitter). */
+.status-line { font-size: 0.85rem; color: var(--accent); margin: 8px 2px;
+    min-height: 1.3em; }
 
 .raw-ocr { margin-top: 10px; font-size: 0.8rem; color: var(--muted); }
 .raw-ocr pre {
