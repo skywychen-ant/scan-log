@@ -242,6 +242,7 @@ if (prefs.ocrLabel) $('#ocr-label').value = prefs.ocrLabel;
 if (prefs.ocrScope) $('#ocr-scope').value = prefs.ocrScope;
 if (prefs.ocrMode)   $('#ocr-mode').value   = prefs.ocrMode;
 if (prefs.ocrFormat) $('#ocr-format').value = prefs.ocrFormat;
+if (prefs.ocrTarget) $('#ocr-target').value = prefs.ocrTarget;
 $('#ocr-label').addEventListener('change', () => {
     prefs.ocrLabel = $('#ocr-label').value; savePrefs(prefs);
 });
@@ -251,6 +252,40 @@ $('#ocr-scope').addEventListener('change', () => {
 $('#ocr-format').addEventListener('change', () => {
     prefs.ocrFormat = $('#ocr-format').value; savePrefs(prefs);
 });
+$('#ocr-target').addEventListener('change', () => {
+    prefs.ocrTarget = $('#ocr-target').value; savePrefs(prefs);
+    applyOcrTarget();
+});
+
+// Report ID preset hides the custom keyword / scope / format rows
+function applyOcrTarget() {
+    const custom = $('#ocr-target').value === 'custom';
+    $('#ocr-custom-row').hidden = !custom;
+    $('#ocr-scope-row').hidden = !custom;
+    $('#ocr-format-row').hidden = !custom;
+}
+
+function targetLabel() {
+    return $('#ocr-target').value === 'report-id'
+        ? 'Report ID' : $('#ocr-label').value.trim();
+}
+
+// Unified extraction for both capture paths.
+// Returns { value, via: 'label'|'format', formatFail: string|null }
+function extractValue(raw) {
+    if ($('#ocr-target').value === 'report-id') {
+        return { value: extractReportId(raw), via: 'label', formatFail: null };
+    }
+    let value = extractAfterLabel(raw, targetLabel(), $('#ocr-scope').value);
+    let formatFail = null, via = 'label';
+    if (value && !valueFormatOk(value)) { formatFail = value; value = null; }
+    if (!value) {
+        const fb = fallbackValue(raw);
+        if (fb) { value = fb; via = 'format'; }
+    }
+    if (value) value = normalizeValue(value);
+    return { value, via, formatFail };
+}
 
 // Optional value-format gate: rejects OCR misreads containing chars
 // the real ID can't have (e.g. hex ID misread "…BE0S" — S isn't hex).
@@ -266,6 +301,26 @@ function valueFormatOk(v) {
 // Hex IDs are recorded uppercase for consistent dedupe/export.
 function normalizeValue(v) {
     return $('#ocr-format').value === 'hex' ? v.toUpperCase() : v;
+}
+
+// ── Dedicated Report ID detector (the tool's primary use case) ──
+// Finds a 20-char hex run ANYWHERE in the band — no label needed.
+// This survives the two-column expense-report layout where Tesseract
+// splits "Report ID :" and the value into separate lines, label
+// misreads, and OCR inserting spaces inside the value (each line is
+// compacted before matching). Requires ≥1 digit and ≥1 letter
+// (real IDs virtually always have both); must be unambiguous.
+function extractReportId(text) {
+    const cands = new Set();
+    for (const line of text.split(/\r?\n/)) {
+        const compact = line.replace(/\s+/g, '');
+        for (const run of compact.match(/[0-9A-Fa-f]+/g) || []) {
+            if (run.length === 20 && /[0-9]/.test(run) && /[A-Fa-f]/.test(run)) {
+                cands.add(run.toUpperCase());
+            }
+        }
+    }
+    return cands.size === 1 ? [...cands][0] : null;
 }
 
 // Label-free FALLBACK: when a value format is set, a long
@@ -440,7 +495,7 @@ function setOcrStatus(msg) {
 async function captureAndRecognize() {
     const v = $('#ocr-video');
     if (!ocrStream || !v.videoWidth) { toast('相機尚未就緒'); return; }
-    const label = $('#ocr-label').value.trim();
+    const label = targetLabel();
     if (!label) { toast('請先輸入目標關鍵字'); return; }
 
     $('#btn-ocr-capture').disabled = true;
@@ -456,16 +511,8 @@ async function captureAndRecognize() {
         $('#ocr-raw').textContent = raw.trim() || '(無辨識結果)';
         $('#ocr-raw-wrap').hidden = false;
 
-        let value = extractAfterLabel(raw, label, $('#ocr-scope').value);
-        let formatFail = null;
-        if (value && !valueFormatOk(value)) { formatFail = value; value = null; }
-        let via = 'label';
-        if (!value) {
-            const fb = fallbackValue(raw);
-            if (fb) { value = fb; via = 'format'; }
-        }
+        const { value, via, formatFail } = extractValue(raw);
         if (value) {
-            value = normalizeValue(value);
             beep();
             pendingOcrValue = value;
             $('#ocr-result-label').textContent =
@@ -476,6 +523,8 @@ async function captureAndRecognize() {
             window.scrollTo({ top: 0, behavior: 'smooth' });
         } else if (formatFail) {
             toast(`找到關鍵字，但「${formatFail}」不符值格式，已拒絕`, 3500);
+        } else if ($('#ocr-target').value === 'report-id') {
+            toast('未偵測到 20 碼 Report ID，請靠近讓該行填滿畫面再試', 3000);
         } else {
             toast(`未找到「${label}」，請對準後再試`, 3000);
         }
@@ -499,7 +548,7 @@ async function autoLoop() {
         const v = $('#ocr-video');
         while (autoRunning && ocrStream && $('#ocr-mode').value === 'auto') {
             if (!v.videoWidth) { await sleep(300); continue; }
-            const label = $('#ocr-label').value.trim();
+            const label = targetLabel();
             if (!label) { setOcrStatus('請先輸入目標關鍵字'); await sleep(800); continue; }
 
             if (!candidate.value) setOcrStatus('🔍 自動辨識中… 將關鍵字對準虛線框');
@@ -513,17 +562,10 @@ async function autoLoop() {
             $('#ocr-raw').textContent = raw.trim() || '(無辨識結果)';
             $('#ocr-raw-wrap').hidden = false;
 
-            let value = extractAfterLabel(raw, label, $('#ocr-scope').value);
-            let via = 'label';
-            if (value && !valueFormatOk(value)) {
-                setOcrStatus(`⚠ 找到關鍵字，值「${value}」不符格式 — 繼續辨識…`);
-                value = null;                 // misread — keep trying
+            const { value, via, formatFail } = extractValue(raw);
+            if (!value && formatFail) {
+                setOcrStatus(`⚠ 找到關鍵字，值「${formatFail}」不符格式 — 繼續辨識…`);
             }
-            if (!value) {
-                const fb = fallbackValue(raw);
-                if (fb) { value = fb; via = 'format'; }
-            }
-            if (value) value = normalizeValue(value);
             if (value) {
                 // Stability gate: require the SAME value on 2 consecutive
                 // frames (when enabled) — filters one-off OCR misreads.
@@ -612,7 +654,7 @@ $('#btn-ocr-stop').addEventListener('click', stopOcrCamera);
 $('#btn-ocr-capture').addEventListener('click', captureAndRecognize);
 $('#btn-ocr-save').addEventListener('click', () => {
     if (!pendingOcrValue) return;
-    const added = addRecord('ocr', $('#ocr-label').value.trim(), pendingOcrValue);
+    const added = addRecord('ocr', targetLabel(), pendingOcrValue);
     if (added) toast('✔ 已加入記錄');
     pendingOcrValue = null;
     $('#ocr-result').hidden = true;
@@ -777,6 +819,7 @@ $('#btn-clear-day').addEventListener('click', () => {
 // ───────── Init ─────────
 AntTheme.attach();
 updateTodayBadge();
+applyOcrTarget();
 
 // PWA service worker (offline caching of app shell)
 if ('serviceWorker' in navigator && window.isSecureContext) {
