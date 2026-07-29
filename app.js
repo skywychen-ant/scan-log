@@ -222,8 +222,17 @@ function grabFrame(v, crop) {
     } else {
         sx = 0; sy = 0; sw = v.videoWidth; sh = v.videoHeight;
     }
-    const target = crop ? OCR_TARGET_W_CROP : OCR_TARGET_W_FULL;
-    const scale = Math.min(crop ? 2 : 1.5, target / sw);
+    // Crop band: PRESERVE native pixels up to 2000px wide — users scan
+    // whole pages at a distance, where the ID is only ~10px tall; any
+    // downscale kills it. Only tiny sources upscale, huge ones cap.
+    let scale;
+    if (crop) {
+        scale = sw < OCR_TARGET_W_CROP ? Math.min(2, OCR_TARGET_W_CROP / sw)
+              : sw > 2000              ? 2000 / sw
+              : 1;
+    } else {
+        scale = Math.min(1.5, OCR_TARGET_W_FULL / sw);
+    }
     const canvas = document.createElement('canvas');
     canvas.width  = Math.round(sw * scale);
     canvas.height = Math.round(sh * scale);
@@ -372,7 +381,7 @@ async function startOcrCamera() {
         // their max; strong ones cap near 2560) — OCR quality depends
         // on pixels-on-text, not on how sharp the preview looks.
         ocrStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'environment', width: { ideal: 2560 }, height: { ideal: 1440 } },
+            video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } },
             audio: false
         });
     } catch (err) {
@@ -583,6 +592,11 @@ async function autoLoop() {
             const { value, via, formatFail } = extractValue(raw);
             if (!value && formatFail) {
                 setOcrStatus(`⚠ 找到關鍵字，值「${formatFail}」不符格式 — 繼續辨識…`);
+            } else if (!value && $('#ocr-target').value === 'report-id' &&
+                       /R[e3]p[o0q]r?[t7]/i.test(raw.replace(/\s+/g, ''))) {
+                // The label IS visible but no valid 20-hex value emerged —
+                // almost always means the text is too small to read.
+                setOcrStatus('👀 看得到 Report ID 標籤，但值太小讀不清 — 請靠近一點');
             }
             if (value) {
                 // Stability gate: require the SAME value on 2 consecutive
