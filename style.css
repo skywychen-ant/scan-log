@@ -96,9 +96,12 @@ h1 { font-size: 1.25rem; font-weight: 700; }
     background: #000; border-radius: 14px; overflow: hidden;
     border: 1px solid var(--border);
 }
-#qr-reader { width: 100%; }
-#qr-reader video { border-radius: 14px; }
-#ocr-video { width: 100%; display: block; }
+#scan-video, #ocr-video { width: 100%; display: block; }
+.scan-guide {
+    position: absolute; left: 6%; right: 6%; top: 25%; height: 50%;
+    border: 2px dashed rgba(255, 255, 255, 0.85); border-radius: 10px;
+    pointer-events: none;
+}
 .camera-placeholder {
     position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 8px;

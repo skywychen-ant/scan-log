@@ -1,4 +1,4 @@
-# ScanLog 掃碼記錄 v2.7
+# ScanLog 掃碼記錄 v2.8
 
 手機掃描工具（PWA 網頁應用程式），三大功能：
 
@@ -17,7 +17,8 @@
 
 - 純 HTML / CSS / JS，無後端（與本 workspace 其他工具同一技術路線；
   因為要在手機上跑，所以是 PWA 而不是 pywebview 桌面包裝）
-- 條碼解碼：`lib/html5-qrcode.min.js`（v2.3.8，已本地打包，離線可用）
+- 條碼解碼：`lib/zxing/`（zxing-wasm v2 — C++ ZXing 編譯成
+  WebAssembly，已本地打包，離線可用）
 - OCR：`tesseract.js` v5（首次使用 OCR 時才從 CDN 延遲載入，
   需要網路；之後瀏覽器會快取）
 - PWA：`manifest.json` + `sw.js`，可「加入主畫面」安裝、
@@ -123,6 +124,7 @@ scan-log/
 
 | 版本 | 日期 | 內容 |
 |---|---|---|
+| v2.8 | 2026-07-29 | 掃碼引擎全面更換：html5-qrcode（JS 版 ZXing）→ **zxing-wasm**（C++ 版 ZXing 編譯 WebAssembly，對密集/列印品質 1D 條碼強得多，本地打包 1.4MB 離線可用）；自建相機掃描迴圈（4K 原生像素、導引框區域裁切、tryHarder＋旋轉＋反色嘗試） |
 | v2.7 | 2026-07-29 | 修 v2.5 掃碼啟動失敗（`cameraIdOrConfig … found 3 keys`）：html5-qrcode 的 start() 第一參數只接受單一 key，4K 解析度請求移到 config.videoConstraints |
 | v2.6 | 2026-07-29 | 修掃碼引擎卡死：權限被拒後重按「開始掃描」出現 `Cannot transition to a new state`（半啟動狀態未重置）→ 失敗後重建引擎、防重複啟動；相機權限被拒時顯示中文解法指引（iOS/Android 設定路徑）取代原始錯誤訊息 |
 | v2.5 | 2026-07-29 | 條碼掃描大幅優化：相機解析度提升到 4K（原本用預設 ~VGA，是列印條碼掃不出的主因）；掃描框改寬扁形（適合 1D 條碼）；fps 10→15；Android 啟用原生條碼解碼器；連續自動對焦；掃碼分頁加變焦按鈕 1×/2×/3× |

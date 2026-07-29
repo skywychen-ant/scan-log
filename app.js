@@ -134,7 +134,6 @@ function switchTab(tab) {
 }
 
 // ═══════════ Tab 1: QR / Barcode scanning ═══════════
-let qrScanner = null;
 let scannerRunning = false;
 let lastScan = { text: null, at: 0 };
 
@@ -149,7 +148,30 @@ function showCameraError(err) {
     }
 }
 
+// ── Decoder: zxing-wasm (C++ ZXing compiled to WebAssembly) ──
+// Far stronger on dense / print-quality 1D barcodes than the previous
+// JS decoder; ~2px per module is enough where zxing-js needed more.
+let zxingReady = null;
+function ensureZxing() {
+    if (!zxingReady) {
+        ZXingWASM.prepareZXingModule({
+            overrides: {
+                locateFile: (path, prefix) =>
+                    path.endsWith('.wasm') ? 'lib/zxing/zxing_full.wasm' : prefix + path
+            }
+        });
+        // Warm up the wasm module with a dummy read
+        zxingReady = ZXingWASM.readBarcodes(
+            new ImageData(2, 2), { tryHarder: false }
+        ).then(() => true).catch(err => { zxingReady = null; throw err; });
+    }
+    return zxingReady;
+}
+
+let scanStream = null;
+let scanLooping = false;
 let scannerStarting = false;
+
 async function startScanner() {
     if (scannerRunning || scannerStarting) return;
     if (!window.isSecureContext) {
@@ -158,46 +180,29 @@ async function startScanner() {
     }
     scannerStarting = true;
     $('#btn-scan-start').disabled = true;
-    $('#scan-placeholder').hidden = true;
-    if (!qrScanner) qrScanner = new Html5Qrcode('qr-reader');
     try {
-        await qrScanner.start(
-            // NOTE: this first arg accepts EXACTLY ONE key — resolution
-            // must go in config.videoConstraints below, not here.
-            { facingMode: 'environment' },
-            {
-                fps: 15,
-                // Wide, short box suits 1D barcodes; QR still fits.
-                qrbox: (w, h) => ({
-                    width: Math.floor(w * 0.85),
-                    height: Math.floor(Math.min(h * 0.45, w * 0.6))
-                }),
-                // Native decoder (Android Chrome) beats the JS fallback
-                experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-                // High resolution is critical for print-quality 1D
-                // barcodes — the default (~VGA) blurs thin bars together.
-                videoConstraints: {
-                    facingMode: 'environment',
-                    width: { ideal: 3840 },
-                    height: { ideal: 2160 }
-                }
-            },
-            onScanSuccess,
-            () => {} // per-frame decode misses — ignore
-        );
+        scanStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } },
+            audio: false
+        });
+        try {
+            await scanStream.getVideoTracks()[0]
+                .applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+        } catch { /* optional */ }
+        const v = $('#scan-video');
+        v.srcObject = scanStream;
+        v.hidden = false;
+        await v.play();
+        await ensureZxing();
         scannerRunning = true;
+        $('#scan-placeholder').hidden = true;
+        $('#scan-guide').hidden = false;
         $('#btn-scan-start').hidden = true;
         $('#btn-scan-stop').hidden = false;
-        // Continuous autofocus helps close-up barcode work
-        try { await qrScanner.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch { /* optional */ }
         setupScanZoom();
+        scanLoop();
     } catch (err) {
-        // Reset the library's half-transitioned state so retry works
-        // (otherwise: "Cannot transition to a new state" on next tap)
-        try { await qrScanner.stop(); } catch { /* wasn't running */ }
-        try { qrScanner.clear(); } catch { /* nothing rendered */ }
-        qrScanner = null;
-        $('#scan-placeholder').hidden = false;
+        stopScanner();
         showCameraError(err);
     } finally {
         scannerStarting = false;
@@ -205,12 +210,46 @@ async function startScanner() {
     }
 }
 
+async function scanLoop() {
+    if (scanLooping) return;
+    scanLooping = true;
+    const v = $('#scan-video');
+    const canvas = document.createElement('canvas');
+    try {
+        while (scannerRunning && scanStream) {
+            if (!v.videoWidth) { await sleep(150); continue; }
+            // Crop to the guide zone (88% × 50% centre) at NATIVE
+            // resolution — dense Code 128 needs every pixel it can get.
+            const sx = Math.floor(v.videoWidth * 0.06);
+            const sy = Math.floor(v.videoHeight * 0.25);
+            const sw = Math.floor(v.videoWidth * 0.88);
+            const sh = Math.floor(v.videoHeight * 0.50);
+            canvas.width = sw; canvas.height = sh;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(v, sx, sy, sw, sh, 0, 0, sw, sh);
+            let results = [];
+            try {
+                results = await ZXingWASM.readBarcodes(
+                    ctx.getImageData(0, 0, sw, sh),
+                    { tryHarder: true, tryRotate: true, tryInvert: true, maxNumberOfSymbols: 1 }
+                );
+            } catch { /* bad frame */ }
+            const hit = results.find(r => r.isValid && r.text);
+            if (hit) onScanSuccess(hit.text, hit.format || 'code');
+            await sleep(120);
+        }
+    } finally {
+        scanLooping = false;
+    }
+}
+
 // Hardware zoom for the barcode scanner (Android mostly; iOS: none)
 function setupScanZoom() {
     const row = $('#scan-zoom-row');
     row.hidden = true;
-    let caps = {};
-    try { caps = qrScanner.getRunningTrackCapabilities() || {}; } catch { return; }
+    if (!scanStream) return;
+    const track = scanStream.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
     if (!caps.zoom || !(caps.zoom.max > 1)) return;
     row.hidden = false;
     row.querySelectorAll('.scan-zoom-opt').forEach(b => {
@@ -219,7 +258,7 @@ function setupScanZoom() {
         b.classList.toggle('primary', z === 1);
         b.onclick = async () => {
             try {
-                await qrScanner.applyVideoConstraints({ advanced: [{ zoom: z }] });
+                await track.applyConstraints({ advanced: [{ zoom: z }] });
                 row.querySelectorAll('.scan-zoom-opt').forEach(x =>
                     x.classList.toggle('primary', x === b));
             } catch { toast('此相機不支援此變焦倍率'); }
@@ -227,23 +266,27 @@ function setupScanZoom() {
     });
 }
 
-async function stopScanner() {
-    if (!scannerRunning || !qrScanner) return;
-    try { await qrScanner.stop(); qrScanner.clear(); } catch { /* already stopped */ }
+function stopScanner() {
     scannerRunning = false;
+    if (scanStream) {
+        scanStream.getTracks().forEach(t => t.stop());
+        scanStream = null;
+    }
+    const v = $('#scan-video');
+    v.srcObject = null; v.hidden = true;
+    $('#scan-placeholder').hidden = false;
+    $('#scan-guide').hidden = true;
     $('#btn-scan-start').hidden = false;
     $('#btn-scan-stop').hidden = true;
-    $('#scan-placeholder').hidden = false;
     $('#scan-zoom-row').hidden = true;
 }
 
-function onScanSuccess(text, result) {
+function onScanSuccess(text, fmt) {
     const now = Date.now();
     // Debounce: same code within 3 s = one scan
     if (text === lastScan.text && now - lastScan.at < 3000) return;
     lastScan = { text, at: now };
 
-    const fmt = result?.result?.format?.formatName || 'code';
     const added = addRecord('qr', fmt, text);
     beep();
     $('#scan-result').hidden = false;

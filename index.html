@@ -16,7 +16,7 @@
 
 <header class="app-header">
     <div class="title-row">
-        <h1>📷 ScanLog <span class="version-badge">v2.7</span></h1>
+        <h1>📷 ScanLog <span class="version-badge">v2.8</span></h1>
         <div class="theme-switch" id="theme-switch" role="group" aria-label="Color theme">
             <button class="theme-opt" data-theme-opt="light"  title="Light theme"  aria-label="Light theme">☀️</button>
             <button class="theme-opt" data-theme-opt="dark"   title="Dark theme"   aria-label="Dark theme">🌙</button>
@@ -37,11 +37,12 @@
 <!-- ═══════════ Tab 1: QR / Barcode scan ═══════════ -->
 <section id="tab-scan" class="tab-panel active" role="tabpanel">
     <div class="camera-box">
-        <div id="qr-reader"></div>
+        <video id="scan-video" playsinline muted hidden></video>
         <div id="scan-placeholder" class="camera-placeholder">
             <p>📷</p>
             <p>支援 QR Code、Code 128 / 39、EAN、UPC、<br>Data Matrix、PDF417 等格式</p>
         </div>
+        <div class="scan-guide" id="scan-guide" hidden></div>
     </div>
     <div class="controls-row" id="scan-zoom-row" hidden>
         <span class="zoom-label">🔍 變焦</span>
@@ -175,7 +176,7 @@
 
 <div id="toast" class="toast" hidden></div>
 
-<script src="lib/html5-qrcode.min.js"></script>
+<script src="lib/zxing/index.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
