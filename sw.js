@@ -1,7 +1,7 @@
 // ScanLog service worker — cache the app shell for offline use.
 // Note: the OCR engine (tesseract.js CDN + language data) still needs
 // network on first OCR use; barcode scanning works fully offline.
-const CACHE = 'scanlog-v2.6';
+const CACHE = 'scanlog-v2.7';
 const ASSETS = [
     './index.html',
     './style.css',

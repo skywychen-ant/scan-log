@@ -162,9 +162,9 @@ async function startScanner() {
     if (!qrScanner) qrScanner = new Html5Qrcode('qr-reader');
     try {
         await qrScanner.start(
-            // High resolution is critical for print-quality 1D barcodes —
-            // the library's default (~VGA) blurs the thin bars together.
-            { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } },
+            // NOTE: this first arg accepts EXACTLY ONE key — resolution
+            // must go in config.videoConstraints below, not here.
+            { facingMode: 'environment' },
             {
                 fps: 15,
                 // Wide, short box suits 1D barcodes; QR still fits.
@@ -173,7 +173,14 @@ async function startScanner() {
                     height: Math.floor(Math.min(h * 0.45, w * 0.6))
                 }),
                 // Native decoder (Android Chrome) beats the JS fallback
-                experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+                experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+                // High resolution is critical for print-quality 1D
+                // barcodes — the default (~VGA) blurs thin bars together.
+                videoConstraints: {
+                    facingMode: 'environment',
+                    width: { ideal: 3840 },
+                    height: { ideal: 2160 }
+                }
             },
             onScanSuccess,
             () => {} // per-frame decode misses — ignore
