@@ -202,21 +202,30 @@ let lastAuto = { value: null, at: 0 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Grab the current video frame onto a canvas.
-// crop=true → only the centre band (around the dashed guide box):
-// smaller image = noticeably faster OCR per frame in auto mode.
+// crop=true → only the centre band (around the dashed guide box).
+// The result is DOWNSCALED before OCR: recognition time scales with
+// pixel count, and Tesseract only needs ~20–30 px text height —
+// full camera resolution is wasted work.
+const OCR_MAX_W_CROP = 1000, OCR_MAX_W_FULL = 1400;
 function grabFrame(v, crop) {
-    const canvas = document.createElement('canvas');
+    let sx, sy, sw, sh;
     if (crop) {
-        const sx = Math.floor(v.videoWidth  * 0.04);
-        const sy = Math.floor(v.videoHeight * 0.30);
-        const sw = Math.floor(v.videoWidth  * 0.92);
-        const sh = Math.floor(v.videoHeight * 0.40);
-        canvas.width = sw; canvas.height = sh;
-        canvas.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, sw, sh);
+        sx = Math.floor(v.videoWidth  * 0.04);
+        sy = Math.floor(v.videoHeight * 0.33);
+        sw = Math.floor(v.videoWidth  * 0.92);
+        sh = Math.floor(v.videoHeight * 0.34);
     } else {
-        canvas.width = v.videoWidth; canvas.height = v.videoHeight;
-        canvas.getContext('2d').drawImage(v, 0, 0);
+        sx = 0; sy = 0; sw = v.videoWidth; sh = v.videoHeight;
     }
+    const scale = Math.min(1, (crop ? OCR_MAX_W_CROP : OCR_MAX_W_FULL) / sw);
+    const canvas = document.createElement('canvas');
+    canvas.width  = Math.round(sw * scale);
+    canvas.height = Math.round(sh * scale);
+    const ctx = canvas.getContext('2d');
+    // Grayscale + contrast boost: faster AND more accurate on printed
+    // documents (silently ignored where ctx.filter is unsupported).
+    try { ctx.filter = 'grayscale(1) contrast(1.25)'; } catch { /* optional */ }
+    ctx.drawImage(v, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
     return canvas;
 }
 
@@ -336,7 +345,10 @@ function ensureTesseract() {
             tessedit_char_whitelist:
                 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' +
                 '0123456789:;.,#()/_- ',
-            preserve_interword_spaces: '1'
+            preserve_interword_spaces: '1',
+            // Documents are dark-text-on-light: skip the inverted-image
+            // second pass Tesseract tries by default (~2x per-frame cost)
+            tessedit_do_invert: '0'
         });
         setOcrStatus('');
         return tesseractWorker;
@@ -434,7 +446,7 @@ async function autoLoop() {
                 if ($('#chk-ocr-stable').checked && !(candidate.value === value && candidate.hits >= 1)) {
                     candidate = { value, hits: 1 };
                     setOcrStatus(`👀 偵測到 ${value} — 確認中…`);
-                    await sleep(150);
+                    await sleep(60);
                     continue;
                 }
                 candidate = { value: null, hits: 0 };
@@ -455,7 +467,7 @@ async function autoLoop() {
             } else if (candidate.value) {
                 candidate = { value: null, hits: 0 };   // lost it — reset
             }
-            await sleep(250);                 // yield between frames
+            await sleep(120);                 // yield between frames
         }
     } catch (err) {
         toast('⚠ ' + (err?.message || err), 4000);
