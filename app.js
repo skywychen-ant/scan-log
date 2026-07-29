@@ -304,23 +304,38 @@ function normalizeValue(v) {
 }
 
 // ── Dedicated Report ID detector (the tool's primary use case) ──
-// Finds a 20-char hex run ANYWHERE in the band — no label needed.
-// This survives the two-column expense-report layout where Tesseract
-// splits "Report ID :" and the value into separate lines, label
-// misreads, and OCR inserting spaces inside the value (each line is
-// compacted before matching). Requires ≥1 digit and ≥1 letter
-// (real IDs virtually always have both); must be unambiguous.
+// Finds a 20-char hex run ANYWHERE in the band — no label needed, so
+// it survives the two-column layout where Tesseract splits label and
+// value into separate lines. Hardened against real-world OCR faults:
+// - values broken by spaces (lines are compacted before matching)
+// - 0→O / 1→l / 5→S style misreads INSIDE the value (a repair pass
+//   maps confusables to hex; raw matches take precedence)
+// - label tail merged onto the value when the colon is dropped
+//   ("…ReportID480F…" → 21-26 run → take the trailing 20 chars)
+// - CJK-noise garbage: candidates must LOOK like an ID (≥5 digits and
+//   ≥3 a-f letters — a random 20-hex has ~12 digits / ~7 letters)
 function extractReportId(text) {
-    const cands = new Set();
-    for (const line of text.split(/\r?\n/)) {
-        const compact = line.replace(/\s+/g, '');
-        for (const run of compact.match(/[0-9A-Fa-f]+/g) || []) {
-            if (run.length === 20 && /[0-9]/.test(run) && /[A-Fa-f]/.test(run)) {
-                cands.add(run.toUpperCase());
-            }
+    const looksLikeId = c =>
+        (c.match(/[0-9]/g) || []).length >= 5 &&
+        (c.match(/[A-Fa-f]/g) || []).length >= 3;
+    const collect = (line, set) => {
+        for (const run of line.match(/[0-9A-Fa-f]+/g) || []) {
+            let cand = null;
+            if (run.length === 20) cand = run;
+            else if (run.length >= 21 && run.length <= 26) cand = run.slice(-20);
+            if (cand && looksLikeId(cand)) set.add(cand.toUpperCase());
         }
+    };
+    const MAP = { O:'0', o:'0', Q:'0', I:'1', l:'1', i:'1', '|':'1', '!':'1', S:'5', s:'5', Z:'2', z:'2' };
+    const raw = new Set(), repaired = new Set();
+    for (const line0 of text.split(/\r?\n/)) {
+        const compact = line0.replace(/\s+/g, '');
+        collect(compact, raw);
+        collect(compact.replace(/[OoQIli|!SsZz]/g, ch => MAP[ch]), repaired);
     }
-    return cands.size === 1 ? [...cands][0] : null;
+    if (raw.size === 1) return [...raw][0];
+    if (raw.size === 0 && repaired.size === 1) return [...repaired][0];
+    return null;
 }
 
 // Label-free FALLBACK: when a value format is set, a long
@@ -379,6 +394,9 @@ async function startOcrCamera() {
     $('#ocr-guide').hidden = false;
     $('#btn-ocr-start').hidden = true;
     $('#btn-ocr-stop').hidden = false;
+    // Diagnostic: the resolution actually delivered (OCR quality
+    // depends on it; helps debug weak-camera reports)
+    toast(`相機解析度 ${v.videoWidth}×${v.videoHeight}`, 1800);
     applyOcrMode();
     // Pre-warm the OCR engine in the background (auto mode's loop
     // awaits ensureTesseract itself)
