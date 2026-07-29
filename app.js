@@ -579,10 +579,32 @@ async function captureAndRecognize() {
 
 // ── Auto mode: keep recognizing frames; when the keyword is found,
 //    record immediately (beep confirms) — no button press needed.
+// Multi-frame consensus: exact-match confirmation deadlocks when OCR
+// flickers between two VALID readings (e.g. 8↔B are both hex). Instead,
+// cluster recent readings that are within edit distance 3 of the
+// latest, then take a per-position majority vote (ties → latest frame).
+function consensusValue(buf) {
+    if (buf.length < 2) return null;
+    const last = buf[buf.length - 1];
+    const close = buf.filter(v => v.length === last.length && editDistLe(v, last, 3));
+    if (close.length < 2) return null;
+    let out = '';
+    for (let i = 0; i < last.length; i++) {
+        const freq = {};
+        for (const v of close) freq[v[i]] = (freq[v[i]] || 0) + 1;
+        let best = last[i];
+        for (const [ch, n] of Object.entries(freq)) {
+            if (n > freq[best]) best = ch;
+        }
+        out += best;
+    }
+    return out;
+}
+
 async function autoLoop() {
     if (autoRunning) return;                  // already looping
     autoRunning = true;
-    let candidate = { value: null, hits: 0 }; // consecutive-frame confirmation
+    let votes = [];                           // recent readings { value, at }
     try {
         const worker = await ensureTesseract();
         await setPsm(worker, '6');
@@ -592,7 +614,7 @@ async function autoLoop() {
             const label = targetLabel();
             if (!label) { setOcrStatus('請先輸入目標關鍵字'); await sleep(800); continue; }
 
-            if (!candidate.value) setOcrStatus('🔍 自動辨識中… 將關鍵字對準虛線框');
+            if (!votes.length) setOcrStatus('🔍 自動辨識中… 將關鍵字對準虛線框');
             let raw = '';
             try {
                 const frame = grabFrame(v, true);
@@ -615,15 +637,22 @@ async function autoLoop() {
                 setOcrStatus('👀 看得到 Report ID 標籤，但值太小讀不清 — 請靠近一點');
             }
             if (value) {
-                // Stability gate: require the SAME value on 2 consecutive
-                // frames (when enabled) — filters one-off OCR misreads.
-                if ($('#chk-ocr-stable').checked && !(candidate.value === value && candidate.hits >= 1)) {
-                    candidate = { value, hits: 1 };
-                    setOcrStatus(`👀 偵測到 ${value} — 確認中…`);
-                    await sleep(60);
-                    continue;
+                // Stability gate: multi-frame consensus (when enabled).
+                // Similar-but-not-identical readings VOTE per character
+                // instead of requiring an exact repeat.
+                if ($('#chk-ocr-stable').checked) {
+                    const nowV = Date.now();
+                    votes = votes.filter(x => nowV - x.at < 6000);
+                    votes.push({ value, at: nowV });
+                    const consensus = consensusValue(votes.map(x => x.value));
+                    if (!consensus) {
+                        setOcrStatus(`👀 偵測到 ${value} — 確認中…`);
+                        await sleep(60);
+                        continue;
+                    }
+                    value = consensus;
+                    votes = [];
                 }
-                candidate = { value: null, hits: 0 };
                 const now = Date.now();
                 // Debounce: same value within 6 s = the same document
                 if (!(value === lastAuto.value && now - lastAuto.at < 6000)) {
@@ -639,9 +668,9 @@ async function autoLoop() {
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                     await sleep(800);         // brief pause after a hit
                 }
-            } else if (candidate.value) {
-                candidate = { value: null, hits: 0 };   // lost it — reset
             }
+            // Note: a missed frame does NOT reset the vote buffer —
+            // entries expire by age (6 s) instead.
             await sleep(120);                 // yield between frames
         }
     } catch (err) {
