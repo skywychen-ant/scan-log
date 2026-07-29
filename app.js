@@ -35,13 +35,44 @@ function timeStr(d = new Date()) {
     return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+// Levenshtein distance ≤ max? (early-exit DP — cheap for short IDs)
+function editDistLe(a, b, max) {
+    if (Math.abs(a.length - b.length) > max) return false;
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+        const cur = [i];
+        let rowMin = i;
+        for (let j = 1; j <= b.length; j++) {
+            cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1,
+                              prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+            if (cur[j] < rowMin) rowMin = cur[j];
+        }
+        if (rowMin > max) return false;
+        prev = cur;
+    }
+    return prev[b.length] <= max;
+}
+
 function addRecord(mode, label, value) {
     const now = new Date();
     const date = todayStr(now);
-    if ($('#chk-dedupe').checked &&
-        records.some(r => r.date === date && r.value === value)) {
-        toast('⚠ 今日已有相同內容，未重複記錄');
-        return false;
+    if ($('#chk-dedupe').checked) {
+        const todays = records.filter(r => r.date === date);
+        if (todays.some(r => r.value === value)) {
+            toast('⚠ 今日已有相同內容，未重複記錄');
+            return false;
+        }
+        // OCR fuzzy dedupe: a long value differing from an existing one
+        // by ≤2 chars is almost certainly the SAME document with a
+        // one-character misread (e.g. 5 → S) — skip it.
+        if (mode === 'ocr' && value.length >= 8) {
+            const near = todays.find(r =>
+                r.mode === 'ocr' && editDistLe(r.value, value, 2));
+            if (near) {
+                toast(`⚠ 與今日記錄「${near.value}」高度相似，視為重複已跳過`, 3500);
+                return false;
+            }
+        }
     }
     records.push({ ts: now.getTime(), date, time: timeStr(now), mode, label, value });
     saveRecords(records);
@@ -192,13 +223,28 @@ function grabFrame(v, crop) {
 // restore prefs
 if (prefs.ocrLabel) $('#ocr-label').value = prefs.ocrLabel;
 if (prefs.ocrScope) $('#ocr-scope').value = prefs.ocrScope;
-if (prefs.ocrMode)  $('#ocr-mode').value  = prefs.ocrMode;
+if (prefs.ocrMode)   $('#ocr-mode').value   = prefs.ocrMode;
+if (prefs.ocrFormat) $('#ocr-format').value = prefs.ocrFormat;
 $('#ocr-label').addEventListener('change', () => {
     prefs.ocrLabel = $('#ocr-label').value; savePrefs(prefs);
 });
 $('#ocr-scope').addEventListener('change', () => {
     prefs.ocrScope = $('#ocr-scope').value; savePrefs(prefs);
 });
+$('#ocr-format').addEventListener('change', () => {
+    prefs.ocrFormat = $('#ocr-format').value; savePrefs(prefs);
+});
+
+// Optional value-format gate: rejects OCR misreads containing chars
+// the real ID can't have (e.g. hex ID misread "…BE0S" — S isn't hex).
+function valueFormatOk(v) {
+    switch ($('#ocr-format').value) {
+        case 'hex':    return /^[0-9A-Fa-f]+$/.test(v);
+        case 'alnum':  return /^[0-9A-Za-z]+$/.test(v);
+        case 'digits': return /^[0-9]+$/.test(v);
+        default:       return true;
+    }
+}
 $('#ocr-mode').addEventListener('change', () => {
     prefs.ocrMode = $('#ocr-mode').value; savePrefs(prefs);
     applyOcrMode();
@@ -333,7 +379,9 @@ async function captureAndRecognize() {
         $('#ocr-raw-wrap').hidden = false;
 
         const value = extractAfterLabel(raw, label, $('#ocr-scope').value);
-        if (value) {
+        if (value && !valueFormatOk(value)) {
+            toast(`「${value}」不符合值格式設定，已拒絕`, 3000);
+        } else if (value) {
             beep();
             pendingOcrValue = value;
             $('#ocr-result-label').textContent = '擷取結果';
@@ -378,7 +426,8 @@ async function autoLoop() {
             $('#ocr-raw').textContent = raw.trim() || '(無辨識結果)';
             $('#ocr-raw-wrap').hidden = false;
 
-            const value = extractAfterLabel(raw, label, $('#ocr-scope').value);
+            let value = extractAfterLabel(raw, label, $('#ocr-scope').value);
+            if (value && !valueFormatOk(value)) value = null;  // misread — keep trying
             if (value) {
                 // Stability gate: require the SAME value on 2 consecutive
                 // frames (when enabled) — filters one-off OCR misreads.
@@ -471,6 +520,45 @@ function datesWithRecords() {
     return [...set].sort().reverse();
 }
 
+// Selected range as { from, to } (inclusive, YYYY-MM-DD), or null if
+// the custom range is incomplete.
+function currentRange() {
+    const scope = $('#rec-scope').value;
+    const today = todayStr();
+    if (scope === 'day') {
+        const d = $('#rec-date').value || today;
+        return { from: d, to: d };
+    }
+    if (scope === 'all') return { from: '0000-01-01', to: '9999-12-31' };
+    if (scope === 'custom') {
+        const f = $('#rec-from').value, t = $('#rec-to').value;
+        if (!f || !t) return null;
+        return f <= t ? { from: f, to: t } : { from: t, to: f };
+    }
+    const days = parseInt(scope, 10);          // '7' or '30'
+    const d = new Date();
+    d.setDate(d.getDate() - (days - 1));
+    return { from: todayStr(d), to: today };
+}
+
+function rangeRecords() {
+    const rng = currentRange();
+    if (!rng) return [];
+    return records
+        .filter(r => r.date >= rng.from && r.date <= rng.to)
+        .sort((a, b) => a.ts - b.ts);
+}
+
+// Human label + filename tag for the current range
+function rangeDesc() {
+    const scope = $('#rec-scope').value;
+    const rng = currentRange();
+    if (!rng) return { label: '（範圍未設定）', tag: 'range' };
+    if (scope === 'day') return { label: rng.from, tag: rng.from };
+    if (scope === 'all') return { label: '全部記錄', tag: 'all' };
+    return { label: `${rng.from} ~ ${rng.to}`, tag: `${rng.from}_to_${rng.to}` };
+}
+
 function renderRecords() {
     const sel = $('#rec-date');
     const keep = sel.value;
@@ -478,23 +566,29 @@ function renderRecords() {
     sel.innerHTML = dates.map(d =>
         `<option value="${d}">${d}${d === todayStr() ? '（今天）' : ''}</option>`).join('');
     sel.value = dates.includes(keep) ? keep : dates[0];
+    const scope = $('#rec-scope').value;
+    $('#rec-date').hidden = scope !== 'day';
+    $('#rec-range').hidden = scope !== 'custom';
     renderList();
 }
 
 function renderList() {
-    const date = $('#rec-date').value;
-    const list = records.filter(r => r.date === date);
+    const list = rangeRecords();
+    const rng = currentRange();
+    const multiDay = !rng || rng.from !== rng.to;
     const ul = $('#rec-list');
     ul.innerHTML = '';
     $('#rec-empty').hidden = list.length > 0;
+    $('#rec-count').textContent = list.length ? `共 ${list.length} 筆` : '';
     list.forEach((r, i) => {
         const li = document.createElement('li');
         li.className = 'rec-item';
         const modeIcon = r.mode === 'ocr' ? '🔤' : '📷';
+        const when = multiDay ? `${r.date} ${r.time}` : r.time;
         li.innerHTML =
             `<span class="idx">${i + 1}</span>` +
             `<div class="body"><div class="val"></div>` +
-            `<div class="meta">${modeIcon} ${escapeHtml(r.label || '')} · ${r.time}</div></div>` +
+            `<div class="meta">${modeIcon} ${escapeHtml(r.label || '')} · ${when}</div></div>` +
             `<button class="del" title="刪除">🗑</button>`;
         li.querySelector('.val').textContent = r.value;
         li.querySelector('.del').addEventListener('click', () => {
@@ -512,6 +606,12 @@ function escapeHtml(s) {
 }
 
 $('#rec-date').addEventListener('change', renderList);
+$('#rec-scope').addEventListener('change', renderRecords);
+$('#rec-from').addEventListener('change', renderList);
+$('#rec-to').addEventListener('change', renderList);
+// custom-range defaults: today
+$('#rec-from').value = todayStr();
+$('#rec-to').value = todayStr();
 
 function download(filename, content, mime) {
     const blob = new Blob([content], { type: mime });
@@ -524,27 +624,26 @@ function download(filename, content, mime) {
 }
 
 $('#btn-export-txt').addEventListener('click', () => {
-    const date = $('#rec-date').value;
-    const list = records.filter(r => r.date === date);
-    if (!list.length) { toast('此日期沒有記錄'); return; }
-    download(`scanlog_${date}.txt`, list.map(r => r.value).join('\n') + '\n', 'text/plain;charset=utf-8');
+    const list = rangeRecords();
+    if (!list.length) { toast('此範圍沒有記錄'); return; }
+    download(`scanlog_${rangeDesc().tag}.txt`,
+        list.map(r => r.value).join('\n') + '\n', 'text/plain;charset=utf-8');
 });
 
 $('#btn-export-csv').addEventListener('click', () => {
-    const date = $('#rec-date').value;
-    const list = records.filter(r => r.date === date);
-    if (!list.length) { toast('此日期沒有記錄'); return; }
+    const list = rangeRecords();
+    if (!list.length) { toast('此範圍沒有記錄'); return; }
     const q = s => '"' + String(s).replace(/"/g, '""') + '"';
     const rows = ['date,time,mode,label,value'];
     list.forEach(r => rows.push([r.date, r.time, r.mode, q(r.label || ''), q(r.value)].join(',')));
     // BOM so Excel opens UTF-8 correctly
-    download(`scanlog_${date}.csv`, '\uFEFF' + rows.join('\n') + '\n', 'text/csv;charset=utf-8');
+    download(`scanlog_${rangeDesc().tag}.csv`,
+        '\uFEFF' + rows.join('\n') + '\n', 'text/csv;charset=utf-8');
 });
 
 $('#btn-copy-list').addEventListener('click', async () => {
-    const date = $('#rec-date').value;
-    const list = records.filter(r => r.date === date);
-    if (!list.length) { toast('此日期沒有記錄'); return; }
+    const list = rangeRecords();
+    if (!list.length) { toast('此範圍沒有記錄'); return; }
     try {
         await navigator.clipboard.writeText(list.map(r => r.value).join('\n'));
         toast(`✔ 已複製 ${list.length} 筆到剪貼簿`);
@@ -554,11 +653,12 @@ $('#btn-copy-list').addEventListener('click', async () => {
 });
 
 $('#btn-clear-day').addEventListener('click', () => {
-    const date = $('#rec-date').value;
-    const n = records.filter(r => r.date === date).length;
-    if (!n) { toast('此日期沒有記錄'); return; }
-    if (!confirm(`確定刪除 ${date} 的全部 ${n} 筆記錄？此動作無法復原。`)) return;
-    records = records.filter(r => r.date !== date);
+    const list = rangeRecords();
+    if (!list.length) { toast('此範圍沒有記錄'); return; }
+    const desc = rangeDesc().label;
+    if (!confirm(`確定刪除 ${desc} 的全部 ${list.length} 筆記錄？此動作無法復原。`)) return;
+    const ids = new Set(list.map(r => r.ts));
+    records = records.filter(r => !ids.has(r.ts));
     saveRecords(records);
     updateTodayBadge();
     renderRecords();

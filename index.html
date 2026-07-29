@@ -16,7 +16,7 @@
 
 <header class="app-header">
     <div class="title-row">
-        <h1>📷 ScanLog <span class="version-badge">v1.3</span></h1>
+        <h1>📷 ScanLog <span class="version-badge">v1.4</span></h1>
         <div class="theme-switch" id="theme-switch" role="group" aria-label="Color theme">
             <button class="theme-opt" data-theme-opt="light"  title="Light theme"  aria-label="Light theme">☀️</button>
             <button class="theme-opt" data-theme-opt="dark"   title="Dark theme"   aria-label="Dark theme">🌙</button>
@@ -82,6 +82,15 @@
         </select>
     </div>
     <div class="field-row inline">
+        <label>值格式驗證</label>
+        <select id="ocr-format">
+            <option value="any" selected>不限制</option>
+            <option value="hex">十六進位（0-9, A-F）</option>
+            <option value="alnum">僅英數（A-Z, 0-9）</option>
+            <option value="digits">僅數字</option>
+        </select>
+    </div>
+    <div class="field-row inline">
         <label>擷取模式</label>
         <select id="ocr-mode">
             <option value="manual" selected>手動（按「擷取辨識」）</option>
@@ -114,15 +123,30 @@
 <!-- ═══════════ Tab 3: Records ═══════════ -->
 <section id="tab-records" class="tab-panel" role="tabpanel">
     <div class="records-toolbar">
+        <select id="rec-scope">
+            <option value="day" selected>單日</option>
+            <option value="7">近 7 天</option>
+            <option value="30">近 30 天</option>
+            <option value="custom">自訂範圍</option>
+            <option value="all">全部</option>
+        </select>
         <select id="rec-date"></select>
+        <div id="rec-range" class="range-inputs" hidden>
+            <input type="date" id="rec-from" aria-label="起始日期">
+            <span>–</span>
+            <input type="date" id="rec-to" aria-label="結束日期">
+        </div>
+    </div>
+    <div class="records-toolbar">
         <button id="btn-export-txt" class="btn">⬇ TXT</button>
         <button id="btn-export-csv" class="btn">⬇ CSV</button>
         <button id="btn-copy-list"  class="btn">📋 複製</button>
+        <span id="rec-count" class="rec-count"></span>
     </div>
     <ul id="rec-list" class="rec-list"></ul>
-    <p id="rec-empty" class="empty-hint">此日期尚無記錄</p>
+    <p id="rec-empty" class="empty-hint">此範圍尚無記錄</p>
     <div class="controls-row">
-        <button id="btn-clear-day" class="btn danger small">🗑 清除此日期全部記錄</button>
+        <button id="btn-clear-day" class="btn danger small">🗑 清除此範圍全部記錄</button>
     </div>
 </section>
 
