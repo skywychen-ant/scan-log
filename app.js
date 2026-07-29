@@ -138,12 +138,26 @@ let qrScanner = null;
 let scannerRunning = false;
 let lastScan = { text: null, at: 0 };
 
+// Friendly, actionable camera-failure messages (a denied permission is
+// REMEMBERED by the OS — the page can never re-prompt on its own)
+function showCameraError(err) {
+    const name = (err && err.name) || '';
+    if (name === 'NotAllowedError' || /permission|denied|NotAllowed/i.test(String(err))) {
+        toast('⚠ 相機權限被拒絕過。iPhone：設定 → ScanLog / Safari → 相機 → 允許（主畫面 App 也可刪除後重新加入以重置）。Android：Chrome 網址列 🔒 → 權限 → 相機', 9000);
+    } else {
+        toast('⚠ 無法啟動相機：' + (err?.message || err), 4000);
+    }
+}
+
+let scannerStarting = false;
 async function startScanner() {
-    if (scannerRunning) return;
+    if (scannerRunning || scannerStarting) return;
     if (!window.isSecureContext) {
         toast('⚠ 需要 HTTPS 才能使用相機（請参考 README 部署）', 4000);
         return;
     }
+    scannerStarting = true;
+    $('#btn-scan-start').disabled = true;
     $('#scan-placeholder').hidden = true;
     if (!qrScanner) qrScanner = new Html5Qrcode('qr-reader');
     try {
@@ -171,8 +185,16 @@ async function startScanner() {
         try { await qrScanner.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch { /* optional */ }
         setupScanZoom();
     } catch (err) {
+        // Reset the library's half-transitioned state so retry works
+        // (otherwise: "Cannot transition to a new state" on next tap)
+        try { await qrScanner.stop(); } catch { /* wasn't running */ }
+        try { qrScanner.clear(); } catch { /* nothing rendered */ }
+        qrScanner = null;
         $('#scan-placeholder').hidden = false;
-        toast('⚠ 無法啟動相機：' + (err?.message || err), 4000);
+        showCameraError(err);
+    } finally {
+        scannerStarting = false;
+        $('#btn-scan-start').disabled = false;
     }
 }
 
@@ -476,7 +498,7 @@ async function startOcrCamera() {
             audio: false
         });
     } catch (err) {
-        toast('⚠ 無法啟動相機：' + (err?.message || err), 4000);
+        showCameraError(err);
         return;
     }
     // Prefer continuous autofocus where the platform allows it
