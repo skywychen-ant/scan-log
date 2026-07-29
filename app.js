@@ -208,14 +208,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // - small frames from low-res cameras UPSCALE up to 2× — Tesseract
 //   needs ~20–30 px text height; too few pixels-on-text = misreads
 //   even when the on-screen preview looks perfectly sharp.
-const OCR_TARGET_W_CROP = 1000, OCR_TARGET_W_FULL = 1400;
+// Crop band tracks the visual guide (42–58%) with a small tolerance —
+// a WIDE band swallows neighbouring lines (CJK text poisons the eng
+// engine) when a whole page is in frame.
+const OCR_TARGET_W_CROP = 1300, OCR_TARGET_W_FULL = 1400;
 function grabFrame(v, crop) {
     let sx, sy, sw, sh;
     if (crop) {
         sx = Math.floor(v.videoWidth  * 0.04);
-        sy = Math.floor(v.videoHeight * 0.33);
+        sy = Math.floor(v.videoHeight * 0.37);
         sw = Math.floor(v.videoWidth  * 0.92);
-        sh = Math.floor(v.videoHeight * 0.34);
+        sh = Math.floor(v.videoHeight * 0.26);
     } else {
         sx = 0; sy = 0; sw = v.videoWidth; sh = v.videoHeight;
     }
@@ -312,6 +315,7 @@ async function startOcrCamera() {
         await ocrStream.getVideoTracks()[0]
             .applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
     } catch { /* unsupported — camera default behaviour */ }
+    setupZoom();
     const v = $('#ocr-video');
     v.srcObject = ocrStream;
     v.hidden = false;
@@ -325,12 +329,38 @@ async function startOcrCamera() {
     // awaits ensureTesseract itself)
     ensureTesseract().catch(() => {});
 }
+// Hardware zoom buttons — real optical/sensor zoom adds actual pixels
+// on the text (unlike digital upscaling). Shown only when the camera
+// exposes a zoom capability (Android Chrome mostly; iOS Safari: none).
+function setupZoom() {
+    const row = $('#ocr-zoom-row');
+    row.hidden = true;
+    if (!ocrStream) return;
+    const track = ocrStream.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (!caps.zoom || !(caps.zoom.max > 1)) return;
+    row.hidden = false;
+    row.querySelectorAll('.zoom-opt').forEach(b => {
+        const z = parseFloat(b.dataset.zoom);
+        b.hidden = z > caps.zoom.max;
+        b.classList.toggle('primary', z === 1);
+        b.onclick = async () => {
+            try {
+                await track.applyConstraints({ advanced: [{ zoom: z }] });
+                row.querySelectorAll('.zoom-opt').forEach(x =>
+                    x.classList.toggle('primary', x === b));
+            } catch { toast('此相機不支援此變焦倍率'); }
+        };
+    });
+}
+
 function stopOcrCamera() {
     autoRunning = false;
     if (ocrStream) {
         ocrStream.getTracks().forEach(t => t.stop());
         ocrStream = null;
     }
+    $('#ocr-zoom-row').hidden = true;
     const v = $('#ocr-video');
     v.srcObject = null; v.hidden = true;
     $('#ocr-placeholder').hidden = false;

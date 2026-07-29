@@ -16,7 +16,7 @@
 
 <header class="app-header">
     <div class="title-row">
-        <h1>📷 ScanLog <span class="version-badge">v1.7</span></h1>
+        <h1>📷 ScanLog <span class="version-badge">v1.8</span></h1>
         <div class="theme-switch" id="theme-switch" role="group" aria-label="Color theme">
             <button class="theme-opt" data-theme-opt="light"  title="Light theme"  aria-label="Light theme">☀️</button>
             <button class="theme-opt" data-theme-opt="dark"   title="Dark theme"   aria-label="Dark theme">🌙</button>
@@ -105,9 +105,15 @@
         <video id="ocr-video" playsinline muted hidden></video>
         <div id="ocr-placeholder" class="camera-placeholder">
             <p>🔤</p>
-            <p>啟動相機後，將文件上的關鍵字對準畫面<br>按「擷取辨識」進行 OCR</p>
+            <p>將關鍵字那一行對準虛線框<br>盡量靠近，讓那行文字的寬度接近填滿畫面<br>（文字愈大辨識愈準）</p>
         </div>
         <div class="ocr-guide" id="ocr-guide" hidden></div>
+    </div>
+    <div class="controls-row" id="ocr-zoom-row" hidden>
+        <span class="zoom-label">🔍 變焦</span>
+        <button class="btn zoom-opt" data-zoom="1">1×</button>
+        <button class="btn zoom-opt" data-zoom="2">2×</button>
+        <button class="btn zoom-opt" data-zoom="3">3×</button>
     </div>
     <div class="controls-row">
         <button id="btn-ocr-start"   class="btn primary big">▶ 啟動相機</button>
