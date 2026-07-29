@@ -511,6 +511,19 @@ async function setPsm(worker, psm) {
     await worker.setParameters({ tessedit_pageseg_mode: psm });
     currentPsm = psm;
 }
+// Show exactly what OCR sees (ground truth for "is the text big
+// enough?"). Updated only while the debug panel is expanded (toDataURL
+// is not free), or forced for one-shot manual captures.
+function updateBandPreview(canvas, force) {
+    const wrap = $('#ocr-raw-wrap');
+    if (!force && !wrap.open) return;
+    $('#ocr-band-info').textContent =
+        `OCR 實際收到的影像：${canvas.width}×${canvas.height}px（文字高度需 ≥20px 才易辨識）`;
+    const img = $('#ocr-band-preview');
+    img.src = canvas.toDataURL('image/jpeg', 0.7);
+    img.hidden = false;
+}
+
 function setOcrStatus(msg) {
     const el = $('#ocr-status');
     // Keep the element in flow (nbsp) while the camera runs — toggling
@@ -528,6 +541,7 @@ async function captureAndRecognize() {
     $('#btn-ocr-capture').disabled = true;
     try {
         const canvas = grabFrame(v, false);   // full frame in manual mode
+        updateBandPreview(canvas, true);
         const worker = await ensureTesseract();
         await setPsm(worker, '3');
         setOcrStatus('⏳ 辨識中…');
@@ -581,7 +595,9 @@ async function autoLoop() {
             if (!candidate.value) setOcrStatus('🔍 自動辨識中… 將關鍵字對準虛線框');
             let raw = '';
             try {
-                const { data } = await worker.recognize(grabFrame(v, true));
+                const frame = grabFrame(v, true);
+                updateBandPreview(frame, false);
+                const { data } = await worker.recognize(frame);
                 raw = data.text || '';
             } catch { /* skip bad frame */ }
             if (!autoRunning) break;

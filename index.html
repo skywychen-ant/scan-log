@@ -16,7 +16,7 @@
 
 <header class="app-header">
     <div class="title-row">
-        <h1>📷 ScanLog <span class="version-badge">v2.1</span></h1>
+        <h1>📷 ScanLog <span class="version-badge">v2.2</span></h1>
         <div class="theme-switch" id="theme-switch" role="group" aria-label="Color theme">
             <button class="theme-opt" data-theme-opt="light"  title="Light theme"  aria-label="Light theme">☀️</button>
             <button class="theme-opt" data-theme-opt="dark"   title="Dark theme"   aria-label="Dark theme">🌙</button>
@@ -128,7 +128,9 @@
         <button id="btn-ocr-stop"    class="btn danger big" hidden>■ 停止</button>
     </div>
     <details class="raw-ocr" id="ocr-raw-wrap" hidden>
-        <summary>OCR 原始辨識文字</summary>
+        <summary>OCR 原始辨識文字／影像</summary>
+        <div class="band-info" id="ocr-band-info"></div>
+        <img id="ocr-band-preview" alt="OCR 辨識影像預覽" hidden>
         <pre id="ocr-raw"></pre>
     </details>
 </section>

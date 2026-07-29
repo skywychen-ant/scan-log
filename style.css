@@ -175,6 +175,11 @@ h1 { font-size: 1.25rem; font-weight: 700; }
     white-space: pre-wrap; word-break: break-all; max-height: 180px;
     overflow: auto; margin-top: 6px; color: var(--text);
 }
+.band-info { font-size: 0.75rem; color: var(--muted); margin: 6px 2px 2px; }
+#ocr-band-preview {
+    width: 100%; border-radius: 8px; border: 1px solid var(--border);
+    margin-top: 4px; display: block;
+}
 
 /* ── Records ── */
 .records-toolbar { display: flex; gap: 6px; margin-bottom: 10px; align-items: center; }
